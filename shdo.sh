@@ -20,6 +20,7 @@ function ask() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
+            -s|--snippet)     py_args+=("$1");       shift   ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;

@@ -103,6 +103,38 @@ def python_version_str() -> str:
     return f"{v.major}.{v.minor}"
 
 
+def _detect_clipboard_cmd() -> list[str] | None:
+    """Find a clipboard copy command available on this system."""
+    import platform
+
+    if platform.system() == "Darwin":
+        if shutil.which("pbcopy"):
+            return ["pbcopy"]
+    elif os.environ.get("WAYLAND_DISPLAY"):
+        if shutil.which("wl-copy"):
+            return ["wl-copy"]
+    if shutil.which("xclip"):
+        return ["xclip", "-selection", "clipboard"]
+    if shutil.which("xsel"):
+        return ["xsel", "--clipboard", "--input"]
+    return None
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy *text* to the system clipboard.  Return True on success."""
+    cmd = _detect_clipboard_cmd()
+    if cmd is None:
+        return False
+    try:
+        proc = subprocess.run(
+            cmd, input=text.encode(), check=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # LLM interaction
 # ---------------------------------------------------------------------------
@@ -427,6 +459,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print raw LLM output to stdout and exit (skip all processing)",
     )
+    g4.add_argument(
+        "-s", "--snippet",
+        action="store_true",
+        help="Generate snippet only: display, copy to clipboard, no file saved",
+    )
 
     return p
 
@@ -477,6 +514,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4. Process response -----------------------------------------------
     cleaned = strip_fences(raw_content)
+
+    # Snippet mode: display + clipboard, nothing else -------------------
+    if args.snippet:
+        log(cleaned, verbose=True)
+        if copy_to_clipboard(cleaned):
+            log("  >> copied to clipboard", verbose=True)
+        else:
+            log("  >> clipboard not available – use the output above", verbose=True)
+        print(cleaned)
+        return 0
 
     # Shell modes -------------------------------------------------------
     if is_oneliner(cleaned):
