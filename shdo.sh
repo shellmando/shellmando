@@ -10,6 +10,7 @@
 : "${MICROAGENT_HOST:=http://localhost:8280}"
 : "${MICROAGENT_STARTER:=${HOME}/scripts/start_llm.sh}"
 : "${MICROAGENT_OUTPUT:=${HOME}/scripts/microagent_out}"
+: "${MICROAGENT_CONFIG:=}"   # path to TOML config (empty = auto-detect)
 
 function ask() {
     # -- collect flags that we forward to microagent.py -------------------
@@ -23,7 +24,7 @@ function ask() {
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
-            --os|--host|--starter|--model|--system-prompt)
+            --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
             --help|-h)        python3 "$MICROAGENT_PY" --help; return 0 ;;
@@ -44,12 +45,17 @@ function ask() {
     trap 'rm -f "$prompt_file"' RETURN
 
     # -- call the python backend -----------------------------------------
+    local -a base_args=(
+        --host "$MICROAGENT_HOST"
+        --starter "$MICROAGENT_STARTER"
+        --output "$MICROAGENT_OUTPUT"
+        --prompt-file "$prompt_file"
+    )
+    [[ -n "$MICROAGENT_CONFIG" ]] && base_args+=(--config "$MICROAGENT_CONFIG")
+
     local exit_code
     python3 "$MICROAGENT_PY" \
-        --host "$MICROAGENT_HOST" \
-        --starter "$MICROAGENT_STARTER" \
-        --output "$MICROAGENT_OUTPUT" \
-        --prompt-file "$prompt_file" \
+        "${base_args[@]}" \
         "${py_args[@]}" \
         -- "$@"
     exit_code=$?

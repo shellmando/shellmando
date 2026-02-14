@@ -48,6 +48,14 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -65,6 +73,65 @@ DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/microagent_out")
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
 CODE_MODES = {"python"}
 ALL_MODES = SHELL_MODES | CODE_MODES
+
+_CONFIG_SEARCH_PATHS: list[Path] = [
+    Path.home() / ".config" / "shellmando" / "config.toml",
+    Path(__file__).resolve().parent / "shellmando.toml",
+]
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+def _find_config(explicit: str | None = None) -> Path | None:
+    """Locate the first existing config file.
+
+    Search order:
+      1. *explicit* path (from ``--config`` or ``MICROAGENT_CONFIG``)
+      2. ``~/.config/shellmando/config.toml``
+      3. ``<script_dir>/shellmando.toml``
+    """
+    if explicit:
+        p = Path(explicit).expanduser()
+        return p if p.is_file() else None
+    for candidate in _CONFIG_SEARCH_PATHS:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _deep_get(d: dict, *keys, default=None):
+    """Safely traverse nested dicts: ``_deep_get(d, 'a', 'b')`` → ``d['a']['b']``."""
+    for k in keys:
+        if not isinstance(d, dict):
+            return default
+        d = d.get(k, default)
+    return d
+
+
+def load_config(path: Path | None) -> dict:
+    """Load and return the TOML config, or an empty dict on failure."""
+    if path is None or tomllib is None:
+        return {}
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception as exc:
+        print(f"Warning: failed to load config {path}: {exc}", file=sys.stderr)
+        return {}
+
+
+def expand_prompt_template(template: str, variables: dict[str, str]) -> str:
+    """Substitute ``{name}`` placeholders in *template*.
+
+    Unknown placeholders are left as-is so partial templates are safe.
+    """
+    class SafeDict(dict):
+        def __missing__(self, key: str) -> str:
+            return "{" + key + "}"
+
+    return template.format_map(SafeDict(variables))
 
 
 # ---------------------------------------------------------------------------
@@ -149,21 +216,64 @@ def ensure_llm_running(
     return False
 
 
-def build_system_prompt(mode: str, os_hint: str) -> str:
-    os_part = f" on {os_hint}" if os_hint else ""
+def _prompt_variables(mode: str, os_hint: str) -> dict[str, str]:
+    """Build the dict of variables available for prompt templates."""
+    return {
+        "mode": mode,
+        "os": os_hint,
+        "python_version": python_version_str(),
+    }
 
+
+def build_system_prompt(mode: str, os_hint: str, cfg: dict | None = None) -> str:
+    cfg = cfg or {}
+    tvars = _prompt_variables(mode, os_hint)
+
+    # Try config-defined template first
     if mode in SHELL_MODES:
+        tpl = _deep_get(cfg, "prompts", "shell", "system", default=None)
+        if tpl:
+            return expand_prompt_template(tpl, tvars)
+        os_part = f" on {os_hint}" if os_hint else ""
         return (
             f"You are a {mode} expert{os_part}. "
             "Reply ONLY with the needed command(s), no explanation. "
             "Use variables only if necessary."
         )
+
     if mode == "python":
+        tpl = _deep_get(cfg, "prompts", "python", "system", default=None)
+        if tpl:
+            return expand_prompt_template(tpl, tvars)
+        os_part = f" on {os_hint}" if os_hint else ""
         return (
             f"You are a Python {python_version_str()} expert{os_part}. "
             "Reply ONLY with Python code. No explanation, no prose."
         )
-    return f"You are a helpful coding assistant for {mode}{os_part}."
+
+    return f"You are a helpful coding assistant for {mode}."
+
+
+def build_user_prompt(user_prompt: str, mode: str, os_hint: str, cfg: dict | None = None) -> str:
+    """Apply config-driven prefix/suffix to the user prompt."""
+    cfg = cfg or {}
+    tvars = _prompt_variables(mode, os_hint)
+
+    if mode in SHELL_MODES:
+        prefix = _deep_get(cfg, "prompts", "shell", "user_prefix", default="")
+        suffix = _deep_get(cfg, "prompts", "shell", "user_suffix", default="")
+    elif mode == "python":
+        prefix = _deep_get(cfg, "prompts", "python", "user_prefix", default="")
+        suffix = _deep_get(cfg, "prompts", "python", "user_suffix", default="")
+    else:
+        prefix, suffix = "", ""
+
+    if prefix:
+        prefix = expand_prompt_template(prefix, tvars)
+    if suffix:
+        suffix = expand_prompt_template(suffix, tvars)
+
+    return f"{prefix}{user_prompt}{suffix}"
 
 
 def query_llm(
@@ -333,7 +443,41 @@ def display_code(path: Path, verbose: bool) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def build_parser() -> argparse.ArgumentParser:
+def _pre_parse_config(argv: list[str] | None) -> tuple[Path | None, dict]:
+    """Extract ``--config`` from *argv* before argparse runs, load the file."""
+    args = argv if argv is not None else sys.argv[1:]
+    config_path_str: str | None = None
+    for i, arg in enumerate(args):
+        if arg == "--config" and i + 1 < len(args):
+            config_path_str = args[i + 1]
+            break
+        if arg.startswith("--config="):
+            config_path_str = arg.split("=", 1)[1]
+            break
+
+    if config_path_str is None:
+        config_path_str = os.environ.get("MICROAGENT_CONFIG")
+
+    cfg_path = _find_config(config_path_str)
+    cfg = load_config(cfg_path)
+    return cfg_path, cfg
+
+
+def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
+    if cfg is None:
+        cfg = {}
+
+    # Helper: resolve a setting with precedence env > config > hardcoded default
+    def _resolve(env_key: str | None, *cfg_keys: str, default):
+        if env_key:
+            env_val = os.environ.get(env_key)
+            if env_val is not None:
+                return env_val
+        cfg_val = _deep_get(cfg, *cfg_keys, default=None)
+        if cfg_val is not None:
+            return cfg_val
+        return default
+
     p = argparse.ArgumentParser(
         prog="microagent",
         description="Query a local LLM for shell commands or code snippets.",
@@ -347,21 +491,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("task", nargs="+", help="Natural-language task description")
 
+    # Config file
+    p.add_argument(
+        "--config",
+        default=None,
+        help="Path to TOML config file (env: MICROAGENT_CONFIG)",
+    )
+
     # LLM connection
     g = p.add_argument_group("LLM connection")
     g.add_argument(
         "--host",
-        default=os.environ.get("MICROAGENT_HOST", DEFAULT_HOST),
+        default=_resolve("MICROAGENT_HOST", "llm", "host", default=DEFAULT_HOST),
         help=f"LLM API base URL (env: MICROAGENT_HOST, default: {DEFAULT_HOST})",
     )
     g.add_argument(
         "--starter",
-        default=os.environ.get("MICROAGENT_STARTER"),
+        default=_resolve("MICROAGENT_STARTER", "llm", "starter", default=None),
         help="Script to start the LLM if it is not running (env: MICROAGENT_STARTER)",
     )
     g.add_argument(
         "--model",
-        default=os.environ.get("MICROAGENT_MODEL", DEFAULT_MODEL),
+        default=_resolve("MICROAGENT_MODEL", "llm", "model", default=DEFAULT_MODEL),
         help=f"Model name (default: {DEFAULT_MODEL})",
     )
 
@@ -370,19 +521,19 @@ def build_parser() -> argparse.ArgumentParser:
     g2.add_argument(
         "-t", "--temperature",
         type=float,
-        default=DEFAULT_TEMPERATURE,
+        default=float(_resolve(None, "generation", "temperature", default=DEFAULT_TEMPERATURE)),
         help=f"Sampling temperature (default: {DEFAULT_TEMPERATURE})",
     )
     g2.add_argument(
         "-m", "--mode",
         choices=sorted(ALL_MODES),
-        default="bash",
+        default=_resolve(None, "generation", "mode", default="bash"),
         help="Language / shell mode (default: bash)",
     )
     g2.add_argument(
         "--os",
         dest="os_hint",
-        default=os.environ.get("MICROAGENT_OS", ""),
+        default=_resolve("MICROAGENT_OS", "generation", "os", default=""),
         help="OS context string for the system prompt (env: MICROAGENT_OS)",
     )
     g2.add_argument(
@@ -393,13 +544,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Network / resilience
     g3 = p.add_argument_group("Network / resilience")
-    g3.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="HTTP timeout in seconds")
-    g3.add_argument("--retries", type=int, default=DEFAULT_RETRIES, help="Max retries for the LLM call")
-    g3.add_argument("--retry-delay", type=float, default=DEFAULT_RETRY_DELAY, help="Seconds between retries")
     g3.add_argument(
-        "--startup-timeout",
-        type=float,
-        default=DEFAULT_STARTUP_TIMEOUT,
+        "--timeout", type=float,
+        default=float(_resolve(None, "network", "timeout", default=DEFAULT_TIMEOUT)),
+        help="HTTP timeout in seconds",
+    )
+    g3.add_argument(
+        "--retries", type=int,
+        default=int(_resolve(None, "network", "retries", default=DEFAULT_RETRIES)),
+        help="Max retries for the LLM call",
+    )
+    g3.add_argument(
+        "--retry-delay", type=float,
+        default=float(_resolve(None, "network", "retry_delay", default=DEFAULT_RETRY_DELAY)),
+        help="Seconds between retries",
+    )
+    g3.add_argument(
+        "--startup-timeout", type=float,
+        default=float(_resolve(None, "network", "startup_timeout", default=DEFAULT_STARTUP_TIMEOUT)),
         help="Max seconds to wait for LLM startup",
     )
 
@@ -408,7 +570,9 @@ def build_parser() -> argparse.ArgumentParser:
     g4.add_argument(
         "-o", "--output",
         type=Path,
-        default=Path(os.environ.get("MICROAGENT_OUTPUT", DEFAULT_OUTPUT_DIR)),
+        default=Path(os.path.expanduser(
+            _resolve("MICROAGENT_OUTPUT", "output", "dir", default=DEFAULT_OUTPUT_DIR)
+        )),
         help=f"Output folder for saved scripts (env: MICROAGENT_OUTPUT, default: {DEFAULT_OUTPUT_DIR})",
     )
     g4.add_argument(
@@ -432,11 +596,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    cfg_path, cfg = _pre_parse_config(argv)
+    parser = build_parser(cfg)
     args = parser.parse_args(argv)
 
     user_prompt: str = " ".join(args.task)
     verbose: bool = args.verbose
+
+    if cfg_path and verbose:
+        log(f"[config] loaded {cfg_path}", verbose=True)
+
+    # Expand ~ in starter path from config
+    if args.starter:
+        args.starter = os.path.expanduser(args.starter)
 
     # 1. Ensure LLM is available ----------------------------------------
     if not ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose):
@@ -446,10 +618,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.os_hint == "" and os.environ.get("MICROAGENT_OS") is None:
         args.os_hint = detect_os()
 
-    system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint)
+    system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint, cfg)
 
-    if args.mode == "python":
+    # Apply config-driven user prompt prefix/suffix (Python mode uses
+    # config templates instead of hardcoded wrapping when available)
+    has_python_prompt_cfg = (
+        _deep_get(cfg, "prompts", "python", "user_prefix", default=None) is not None
+        or _deep_get(cfg, "prompts", "python", "user_suffix", default=None) is not None
+    )
+    if args.mode == "python" and has_python_prompt_cfg:
+        user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
+    elif args.mode == "python":
+        # Fallback to original hardcoded behaviour
         user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
+    elif args.mode in SHELL_MODES:
+        user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
 
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
