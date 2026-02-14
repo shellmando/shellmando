@@ -2,7 +2,7 @@
 
 AI-powered shell tool that generates commands and scripts from natural language using a local LLM.
 
-Describe what you need in plain English -- shellmando talks to a local OpenAI-compatible endpoint and returns ready-to-run shell commands or Python scripts, injected straight into your readline prompt.
+Describe what you need in plain English or any language your local LLM supports -- shellmando talks to a local OpenAI-compatible endpoint and returns ready-to-run shell commands or Python scripts, injected straight into your readline prompt.
 
 ## Features
 
