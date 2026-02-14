@@ -423,6 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Forward full LLM response and debug info to stderr",
     )
     g4.add_argument(
+        "-j", "--justanswer",
+        action="store_true",
+        help="Just answer the question: print the LLM reply and exit "
+             "(no prompt adaptation, no file generated)",
+    )
+    g4.add_argument(
         "--raw",
         action="store_true",
         help="Print raw LLM output to stdout and exit (skip all processing)",
@@ -446,9 +452,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.os_hint == "" and os.environ.get("MICROAGENT_OS") is None:
         args.os_hint = detect_os()
 
-    system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint)
+    if args.justanswer:
+        system_prompt = args.system_prompt or "You are a helpful assistant."
+    else:
+        system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint)
 
-    if args.mode == "python":
+    if not args.justanswer and args.mode == "python":
         user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
 
     log(f"[system] {system_prompt}", verbose=verbose)
@@ -473,6 +482,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.raw:
         print(raw_content)
+        return 0
+
+    if args.justanswer:
+        print(strip_fences(raw_content))
         return 0
 
     # 4. Process response -----------------------------------------------
