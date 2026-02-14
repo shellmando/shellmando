@@ -257,6 +257,18 @@ def extension_for_mode(mode: str) -> str:
     return mapping.get(mode, ".txt")
 
 
+def mode_from_extension(filepath: Path) -> str | None:
+    """Guess the language mode from a file extension."""
+    ext_map: dict[str, str] = {
+        ".py": "python",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".zsh": "zsh",
+        ".fish": "fish",
+    }
+    return ext_map.get(filepath.suffix.lower())
+
+
 def find_label(
     initial_label: str,
     content: str
@@ -376,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
     g2.add_argument(
         "-m", "--mode",
         choices=sorted(ALL_MODES),
-        default="bash",
+        default=None,
         help="Language / shell mode (default: bash)",
     )
     g2.add_argument(
@@ -428,6 +440,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print raw LLM output to stdout and exit (skip all processing)",
     )
 
+    # File operations
+    g5 = p.add_argument_group("File operations")
+    g5.add_argument(
+        "-e", "--edit",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Send FILE content with the prompt; write the result back (edit in place)",
+    )
+    g5.add_argument(
+        "-a", "--append",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Send FILE content with the prompt; append the generated code to the file",
+    )
+
     return p
 
 
@@ -437,6 +466,28 @@ def main(argv: list[str] | None = None) -> int:
 
     user_prompt: str = " ".join(args.task)
     verbose: bool = args.verbose
+
+    # -- File operations (-e/--edit, -a/--append) ---------------------------
+    if args.edit and args.append:
+        log("Error: --edit and --append are mutually exclusive.", verbose=True)
+        return 1
+
+    target_file: Path | None = args.edit or args.append
+    file_op: str | None = "edit" if args.edit else ("append" if args.append else None)
+
+    file_content: str = ""
+    if target_file is not None:
+        if target_file.exists():
+            file_content = target_file.read_text(encoding="utf-8")
+        # Auto-detect mode from file extension when -m is not given
+        if args.mode is None:
+            detected = mode_from_extension(target_file)
+            if detected:
+                args.mode = detected
+
+    # Resolve mode default
+    if args.mode is None:
+        args.mode = "bash"
 
     # 1. Ensure LLM is available ----------------------------------------
     if not ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose):
@@ -448,8 +499,25 @@ def main(argv: list[str] | None = None) -> int:
 
     system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint)
 
-    if args.mode == "python":
+    if args.mode == "python" and file_op is None:
         user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
+
+    # Augment prompt with file content for edit/append modes
+    if file_op is not None and file_content:
+        if file_op == "edit":
+            user_prompt = (
+                f"Here is the current content of `{target_file.name}`:\n"
+                f"```\n{file_content}\n```\n\n"
+                f"{user_prompt}\n\n"
+                "Return the complete updated file content."
+            )
+        else:  # append
+            user_prompt = (
+                f"Here is the current content of `{target_file.name}`:\n"
+                f"```\n{file_content}\n```\n\n"
+                f"{user_prompt}\n\n"
+                "Return ONLY the new code to append. Do not repeat existing content."
+            )
 
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
@@ -477,6 +545,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4. Process response -----------------------------------------------
     cleaned = strip_fences(raw_content)
+
+    # -- File operation: write result to target file ---------------------
+    if file_op is not None:
+        if file_op == "edit":
+            target_file.write_text(cleaned + "\n", encoding="utf-8")
+            log(f"Wrote: {target_file}", verbose=True)
+        else:  # append
+            with target_file.open("a", encoding="utf-8") as f:
+                if file_content and not file_content.endswith("\n"):
+                    f.write("\n")
+                f.write(cleaned + "\n")
+            log(f"Appended to: {target_file}", verbose=True)
+        display_code(target_file, verbose=True)
+        return 0
 
     # Shell modes -------------------------------------------------------
     if is_oneliner(cleaned):

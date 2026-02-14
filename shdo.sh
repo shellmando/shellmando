@@ -23,6 +23,8 @@ function ask() {
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
+            -e|--edit)        py_args+=("$1" "$2"); shift 2 ;;
+            -a|--append)      py_args+=("$1" "$2"); shift 2 ;;
             --os|--host|--starter|--model|--system-prompt)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
@@ -63,13 +65,11 @@ function ask() {
     local cmd=""
     if [[ -s "$prompt_file" ]]; then
         cmd=$(<"$prompt_file")
-    else
-        cmd="$stdout_capture"
     fi
 
     if [[ -z "$cmd" ]]; then
-        echo "(no result)" >&2
-        return 1
+        # File operation completed or no command to inject
+        return 0
     fi
     local run_prompt="${PS1@P}"
     run_prompt="${run_prompt##*$'\n'}"
