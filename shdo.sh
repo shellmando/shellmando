@@ -6,26 +6,32 @@
 # --------------------------------------------------------------------------
 
 # Override these via environment if you like:
-: "${MICROAGENT_PY:=${HOME}/scripts/microagent.py}"
+: "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
+export SHELLMANDO_DIR
+: "${MICROAGENT_PY:=${SHELLMANDO_DIR}/microagent.py}"
 : "${MICROAGENT_HOST:=http://localhost:8280}"
-: "${MICROAGENT_STARTER:=${HOME}/scripts/start_llm.sh}"
-: "${MICROAGENT_OUTPUT:=${HOME}/scripts/microagent_out}"
+: "${MICROAGENT_STARTER:=${SHELLMANDO_DIR}/start_llm.sh}"
+: "${MICROAGENT_OUTPUT:=${SHELLMANDO_DIR}/generated}"
+: "${MICROAGENT_CONFIG:=}"   # path to TOML config (empty = auto-detect)
+export MICROAGENT_OUTPUT
 
 function ask() {
     # -- collect flags that we forward to microagent.py -------------------
     local -a py_args=()
-    local justanswer=0
     local OPTIND opt
+    local snippet_mode=false
+    local justanswer=false
 
     # quick pre-scan: pass everything before the bare task words
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
-            -j|--justanswer)  py_args+=("$1"); justanswer=1; shift ;;
+            -s|--snippet)     py_args+=("$1"); snippet_mode=true; shift   ;;
+            -j|--justanswer)  py_args+=("$1"); justanswer=true; shift ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
-            --os|--host|--starter|--model|--system-prompt)
+            --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
             --help|-h)        python3 "$MICROAGENT_PY" --help; return 0 ;;
@@ -46,12 +52,17 @@ function ask() {
     trap 'rm -f "$prompt_file"' RETURN
 
     # -- call the python backend -----------------------------------------
+    local -a base_args=(
+        --host "$MICROAGENT_HOST"
+        --starter "$MICROAGENT_STARTER"
+        --output "$MICROAGENT_OUTPUT"
+        --prompt-file "$prompt_file"
+    )
+    [[ -n "$MICROAGENT_CONFIG" ]] && base_args+=(--config "$MICROAGENT_CONFIG")
+
     local exit_code
     python3 "$MICROAGENT_PY" \
-        --host "$MICROAGENT_HOST" \
-        --starter "$MICROAGENT_STARTER" \
-        --output "$MICROAGENT_OUTPUT" \
-        --prompt-file "$prompt_file" \
+        "${base_args[@]}" \
         "${py_args[@]}" \
         -- "$@"
     exit_code=$?
@@ -74,7 +85,7 @@ function ask() {
         cmd="$stdout_capture"
     fi
 
-    if [[ -z "$cmd" ]]; then
+    if [[ -z "$cmd" && ! snippet_mode ]]; then
         echo "(no result)" >&2
         return 1
     fi
