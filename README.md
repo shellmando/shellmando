@@ -36,13 +36,35 @@ cp shdo.sh ~/scripts/
 echo 'source ~/scripts/shdo.sh' >> ~/.bashrc
 ```
 
-3. (Optional) Configure environment variables in your shell profile:
+3. (Optional) Copy and customize the config file:
+
+```bash
+mkdir -p ~/.config/shellmando
+cp shellmando.toml ~/.config/shellmando/config.toml
+```
+
+See [docs/config.md](docs/config.md) for the full configuration reference.
+
+4. (Optional) Configure environment variables in your shell profile:
 
 ```bash
 export SHELLMANDO_HOST="http://localhost:8280"   # LLM API base URL
 export SHELLMANDO_LLM_STARTER="$HOME/scripts/start_llm.sh"  # script to auto-start LLM
 export SHELLMANDO_OUTPUT="$HOME/scripts/shellmando_out"  # where scripts are saved
 ```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `SHELLMANDO_DIR` | Directory containing `shdo.sh` and `shellmando.py` (auto-detected) |
+| `SHELLMANDO_PY` | Path to `shellmando.py` (defaults to `$SHELLMANDO_DIR/shellmando.py`) |
+| `SHELLMANDO_HOST` | LLM API base URL (default: `http://localhost:8280`) |
+| `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server |
+| `SHELLMANDO_OUTPUT` | Output directory for saved scripts (default: `$SHELLMANDO_DIR/generated`) |
+| `SHELLMANDO_CONFIG` | Path to a TOML config file (empty = auto-detect) |
+| `SHELLMANDO_OS` | OS context string for the system prompt (auto-detected if unset) |
+| `SHELLMANDO_MODEL` | Model name to use (default: `default`) |
 
 ## Usage
 
@@ -54,14 +76,19 @@ ask [options] <task ...>
 
 | Flag | Description |
 |------|-------------|
-| `-m, --mode` | Language mode: `bash`, `sh`, `zsh`, `fish`, `python` (default: `bash`) |
+| `-m, --mode` | Language mode: `bash`, `sh`, `zsh`, `fish`, `python`, `none` (default: `bash`) |
 | `-t, --temperature` | Sampling temperature, 0-2 (default: `0.1`) |
+| `-s, --snippet` | Generate snippet only: display, copy to clipboard, no file saved |
+| `-j, --justanswer` | Just answer the question: print LLM reply and exit (no prompt adaptation, no file generated) |
 | `-v, --verbose` | Show full LLM response and debug info |
 | `--raw` | Print raw LLM output without processing |
 | `-o, --output` | Output folder for saved scripts |
+| `--os` | OS context string for the system prompt (auto-detected if omitted) |
 | `--host` | LLM API base URL |
+| `--starter` | Script to auto-start the LLM if it is not running |
 | `--model` | Model name to use |
 | `--system-prompt` | Override the entire system prompt |
+| `--config` | Path to a TOML config file (see [docs/config.md](docs/config.md)) |
 
 ## Examples
 
@@ -96,6 +123,10 @@ ask --raw "generate a cron expression for every weekday at 9am" > cron.txt
 ```
 
 With `--raw`, the unprocessed LLM response is printed to stdout -- useful for piping or saving directly to a file.
+
+## Configuration
+
+shellmando supports a TOML config file for persistent settings. See [docs/config.md](docs/config.md) for the full reference, including all sections (`[llm]`, `[generation]`, `[network]`, `[output]`, `[prompts.*]`) and template variables.
 
 ## How it works
 
