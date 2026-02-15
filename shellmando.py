@@ -70,7 +70,13 @@ DEFAULT_TIMEOUT = 120
 DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
 DEFAULT_STARTUP_TIMEOUT = 50
-DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/shellmando_out")
+DEFAULT_CONFIG_HOME = os.environ.get(
+    "XDG_CONFIG_HOME", os.path.expanduser("~/.config")
+)
+DEFAULT_DATA_HOME = os.environ.get(
+    "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+)
+DEFAULT_OUTPUT_DIR = os.path.join(DEFAULT_DATA_HOME, "shellmando")
 SHELLMANDO_DIR = os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
@@ -79,7 +85,7 @@ NO_MODES = {"none"}
 ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
 
 _CONFIG_SEARCH_PATHS: list[Path] = [
-    Path.home() / ".config" / "shellmando" / "config.toml",
+    Path(DEFAULT_CONFIG_HOME) / "shellmando" / "config.toml",
     Path(__file__).resolve().parent / "shellmando.toml",
 ]
 
@@ -94,7 +100,7 @@ def _find_config(explicit: str | None = None) -> Path | None:
 
     Search order:
       1. *explicit* path (from ``--config`` or ``SHELLMANDO_CONFIG``)
-      2. ``~/.config/shellmando/config.toml``
+      2. ``$XDG_CONFIG_HOME/shellmando/config.toml``  (default: ``~/.config``)
       3. ``<script_dir>/shellmando.toml``
     """
     if explicit:

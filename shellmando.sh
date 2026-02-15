@@ -2,16 +2,20 @@
 # ask() – thin shell wrapper around shellmando.py
 #
 # Source this file from your .bashrc / .zshrc:
-#   source ~/scripts/ask.bash
+#   source ~/.local/lib/shellmando/shellmando.sh
 # --------------------------------------------------------------------------
+
+# XDG Base Directory defaults
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+: "${XDG_DATA_HOME:=$HOME/.local/share}"
 
 # Override these via environment if you like:
 : "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
 export SHELLMANDO_DIR
 : "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
 : "${SHELLMANDO_HOST:=http://localhost:8280}"
-: "${SHELLMANDO_LLM_STARTER:=${SHELLMANDO_DIR}/start_llm.sh}"
-: "${SHELLMANDO_OUTPUT:=${SHELLMANDO_DIR}/generated}"
+: "${SHELLMANDO_LLM_STARTER:=${XDG_CONFIG_HOME}/shellmando/start_llm.sh}"
+: "${SHELLMANDO_OUTPUT:=${XDG_DATA_HOME}/shellmando}"
 : "${SHELLMANDO_CONFIG:=}"   # path to TOML config (empty = auto-detect)
 export SHELLMANDO_OUTPUT
 
