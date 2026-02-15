@@ -82,6 +82,8 @@ ask [options] <task ...>
 | `-j, --justanswer` | Just answer the question: print LLM reply and exit (no prompt adaptation, no file generated) |
 | `-v, --verbose` | Show full LLM response and debug info |
 | `--raw` | Print raw LLM output without processing |
+| `-a, --append` | Append the LLM response to the specified file (the file's content is sent as context with your prompt) |
+| `-e, --edit` | Overwrite the specified file with the LLM response (the file's content is sent as context with your prompt) |
 | `-o, --output` | Output folder for saved scripts |
 | `--os` | OS context string for the system prompt (auto-detected if omitted) |
 | `--host` | LLM API base URL |
