@@ -728,6 +728,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.mode in SHELL_MODES:
         user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
 
+    if (args.edit or args.append) and len(file_content) > 0:
+        fcontent = f"\n```{args.mode}\n{file_content}```\n" 
+        if args.edit:
+            edit_instruction = f". Please edit the file: {fcontent}"
+        else:
+            edit_instruction = f". Current file content is: {fcontent}. Please give me only your additions. "
+        user_prompt += edit_instruction
+
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
 
@@ -768,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
             with target_file.open("a", encoding="utf-8") as f:
                 if file_content and not file_content.endswith("\n"):
                     f.write("\n")
-                f.write(cleaned + "\n")
+                f.write("\n" + cleaned + "\n")
             log(f"Appended to: {target_file}", verbose=True)
         display_code(target_file, verbose=True)
         return 0
