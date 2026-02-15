@@ -1,0 +1,68 @@
+# shellmando configuration
+# ========================
+#
+# Config file search order:
+#   1. --config CLI argument
+#   2. MICROAGENT_CONFIG environment variable
+#   3. ~/.config/shellmando/config.toml
+#   4. <script_dir>/shellmando.toml  (next to microagent.py)
+#
+# Precedence (highest wins): CLI flags > environment variables > config file > defaults
+#
+# Prompt templates support these variables (replaced at runtime):
+#   {mode}           - current mode (bash, zsh, python, …)
+#   {os}             - detected or configured OS description
+#   {python_version} - Python version, e.g. "3.12"
+
+# -- LLM connection --------------------------------------------------------
+
+[llm]
+host = "http://localhost:8280"
+starter = "~/scripts/start_llm.sh"
+model = "default"
+
+# -- Generation defaults ----------------------------------------------------
+
+[generation]
+mode = "bash"                  # bash | sh | zsh | fish | python
+temperature = 0.1
+os = ""                        # leave empty to auto-detect
+
+# -- Network / resilience ---------------------------------------------------
+
+[network]
+timeout = 120                  # HTTP timeout per request (seconds)
+retries = 30                   # max retry attempts
+retry_delay = 1.0              # seconds between retries
+startup_timeout = 50           # max seconds to wait for LLM startup
+
+# -- Output -----------------------------------------------------------------
+
+[output]
+dir = "~/scripts/microagent_out"
+
+# -- Prompt templates -------------------------------------------------------
+#
+# Each mode section can define:
+#   system  - the system prompt sent to the LLM
+#   user_prefix - prepended to the user's task text
+#   user_suffix - appended to the user's task text
+#
+# All three fields support the template variables listed above.
+# If a section is missing the built-in defaults are used.
+
+[prompts.shell]
+system = """\
+You are a {mode} expert on {os}. \
+Reply ONLY with the needed command(s), no explanation. \
+Use variables only if necessary."""
+
+[prompts.python]
+system = """\
+Reply ONLY with Python code. No explanation, no prose."""
+
+user_prefix = "In Python {python_version}: "
+
+user_suffix = """\
+. Give me only the Python code use comprehension, \
+modern type hints"""
