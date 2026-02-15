@@ -27,13 +27,13 @@ Describe what you need in plain English or any language your local LLM supports 
 ```bash
 mkdir -p ~/scripts
 cp shellmando.py ~/scripts/
-cp shdo.sh ~/scripts/
+cp shellmando.sh ~/scripts/
 ```
 
 2. Source the shell wrapper in your `.bashrc` or `.zshrc`:
 
 ```bash
-echo 'source ~/scripts/shdo.sh' >> ~/.bashrc
+echo 'source ~/scripts/shellmando.sh' >> ~/.bashrc
 ```
 
 3. (Optional) Copy and customize the config file:
@@ -57,7 +57,7 @@ export SHELLMANDO_OUTPUT="$HOME/scripts/shellmando_out"  # where scripts are sav
 
 | Variable | Description |
 |----------|-------------|
-| `SHELLMANDO_DIR` | Directory containing `shdo.sh` and `shellmando.py` (auto-detected) |
+| `SHELLMANDO_DIR` | Directory containing `shellmando.sh` and `shellmando.py` (auto-detected) |
 | `SHELLMANDO_PY` | Path to `shellmando.py` (defaults to `$SHELLMANDO_DIR/shellmando.py`) |
 | `SHELLMANDO_HOST` | LLM API base URL (default: `http://localhost:8280`) |
 | `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server |
@@ -134,7 +134,7 @@ shellmando supports a TOML config file for persistent settings. See [docs/config
 
 shellmando has two layers:
 
-1. **`shdo.sh`** -- a thin bash function (`ask`) that handles flag parsing, temp-file management, and readline injection.
+1. **`shellmando.sh`** -- a thin bash function (`ask`) that handles flag parsing, temp-file management, and readline injection.
 2. **`shellmando.py`** -- the Python backend that manages LLM health checks, builds prompts, queries the model, and processes the response.
 
 When a result is a single short command it is injected into your shell prompt via readline. When the result is a longer script it is saved to disk, pretty-printed, and the run command is placed in your prompt instead.
