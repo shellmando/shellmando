@@ -386,15 +386,23 @@ def is_oneliner(text: str) -> bool:
     return "\n" not in text and len(text) < 512
 
 
-def extension_for_mode(mode: str) -> str:
-    mapping: dict[str, str] = {
+def _get_mapping(): 
+     return {
         "python": ".py",
         "bash": ".sh",
         "sh": ".sh",
         "zsh": ".zsh",
         "fish": ".fish",
     }
-    return mapping.get(mode, ".txt")
+
+def extension_for_mode(mode: str) -> str:
+    return _get_mapping().get(mode, ".txt")
+
+
+def mode_from_extension(filepath: Path) -> str | None:
+    """Guess the language mode from a file extension."""
+    ext_map: dict[str, str] = {value: key for key, value in _get_mapping().items()}
+    return ext_map.get(filepath.suffix.lower())
 
 
 def find_label(
@@ -558,7 +566,7 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     g2.add_argument(
         "-m", "--mode",
         choices=sorted(ALL_MODES),
-        default=_resolve(None, "generation", "mode", default="bash"),
+        default=_resolve(None, "generation", "mode", default=None),
         help="Language / shell mode (default: bash)",
     )
     g2.add_argument(
@@ -633,6 +641,23 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="Generate snippet only: display, copy to clipboard, no file saved",
     )
+    
+    # File operations
+    g5 = p.add_argument_group("File operations")
+    g5.add_argument(
+        "-e", "--edit",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Send FILE content with the prompt; write the result back (edit in place)",
+    )
+    g5.add_argument(
+        "-a", "--append",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Send FILE content with the prompt; append the generated code to the file",
+    )
 
     return p
 
@@ -647,6 +672,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if cfg_path and verbose:
         log(f"[config] loaded {cfg_path}", verbose=True)
+
+    # -- File operations (-e/--edit, -a/--append) ---------------------------
+    if args.edit and args.append:
+        log("Error: --edit and --append are mutually exclusive.", verbose=True)
+        return 1
+
+    target_file: Path | None = args.edit or args.append
+    file_op: str | None = "edit" if args.edit else ("append" if args.append else None)
+
+    file_content: str = ""
+    if target_file is not None:
+        if target_file.exists():
+            file_content = target_file.read_text(encoding="utf-8")
+        # Auto-detect mode from file extension overriding -m
+        detected = mode_from_extension(target_file)
+        if detected:
+            args.mode = detected
+
+    # Resolve mode default
+    if args.mode is None:
+        args.mode = "bash"
 
     # Expand ~ in starter path from config
     if args.starter:
@@ -663,9 +709,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.justanswer:
         system_prompt = args.system_prompt or "You are a helpful assistant."
     else:
-        args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
+        system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
 
-    if not args.justanswer and args.mode == "python":
+    if not args.justanswer and args.mode == "python" and file_op is None:
         user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
 
     # Apply config-driven user prompt prefix/suffix (Python mode uses
@@ -712,6 +758,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4. Process response -----------------------------------------------
     cleaned = strip_fences(raw_content)
+
+    # -- File operation: write result to target file ---------------------
+    if file_op is not None:
+        if file_op == "edit":
+            target_file.write_text(cleaned + "\n", encoding="utf-8")
+            log(f"Wrote: {target_file}", verbose=True)
+        else:  # append
+            with target_file.open("a", encoding="utf-8") as f:
+                if file_content and not file_content.endswith("\n"):
+                    f.write("\n")
+                f.write(cleaned + "\n")
+            log(f"Appended to: {target_file}", verbose=True)
+        display_code(target_file, verbose=True)
+        return 0
 
     # Snippet mode: display + clipboard, nothing else -------------------
     if args.snippet:

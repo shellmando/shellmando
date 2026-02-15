@@ -31,6 +31,8 @@ function ask() {
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
+            -e|--edit)        py_args+=("$1" "$2"); shift 2 ;;
+            -a|--append)      py_args+=("$1" "$2"); shift 2 ;;
             --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
