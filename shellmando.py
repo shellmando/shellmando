@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""microagent – a local-LLM powered command/script generator.
+"""shellmando – a local-LLM powered command/script generator.
 
 Talks to a local OpenAI-compatible chat-completion endpoint, processes the
 response and hands the result back to a thin shell wrapper that owns the
@@ -69,7 +69,7 @@ DEFAULT_TIMEOUT = 120
 DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
 DEFAULT_STARTUP_TIMEOUT = 50
-DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/microagent_out")
+DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/shellmando_out")
 SHELLMANDO_DIR=os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
@@ -91,7 +91,7 @@ def _find_config(explicit: str | None = None) -> Path | None:
     """Locate the first existing config file.
 
     Search order:
-      1. *explicit* path (from ``--config`` or ``MICROAGENT_CONFIG``)
+      1. *explicit* path (from ``--config`` or ``SHELLMANDO_CONFIG``)
       2. ``~/.config/shellmando/config.toml``
       3. ``<script_dir>/shellmando.toml``
     """
@@ -487,7 +487,7 @@ def _pre_parse_config(argv: list[str] | None) -> tuple[Path | None, dict]:
             break
 
     if config_path_str is None:
-        config_path_str = os.environ.get("MICROAGENT_CONFIG")
+        config_path_str = os.environ.get("SHELLMANDO_CONFIG")
 
     cfg_path = _find_config(config_path_str)
     cfg = load_config(cfg_path)
@@ -510,14 +510,14 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         return default
 
     p = argparse.ArgumentParser(
-        prog="microagent",
+        prog="shellmando",
         description="Query a local LLM for shell commands or code snippets.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             examples:
-              microagent "list all docker containers sorted by size"
-              microagent -m python "read a CSV and plot column 3"
-              microagent -v -t 0.5 "find duplicate files in /data"
+              shellmando "list all docker containers sorted by size"
+              shellmando -m python "read a CSV and plot column 3"
+              shellmando -v -t 0.5 "find duplicate files in /data"
         """),
     )
     p.add_argument("task", nargs="+", help="Natural-language task description")
@@ -526,24 +526,24 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     p.add_argument(
         "--config",
         default=None,
-        help="Path to TOML config file (env: MICROAGENT_CONFIG)",
+        help="Path to TOML config file (env: SHELLMANDO_CONFIG)",
     )
 
     # LLM connection
     g = p.add_argument_group("LLM connection")
     g.add_argument(
         "--host",
-        default=_resolve("MICROAGENT_HOST", "llm", "host", default=DEFAULT_HOST),
-        help=f"LLM API base URL (env: MICROAGENT_HOST, default: {DEFAULT_HOST})",
+        default=_resolve("SHELLMANDO_HOST", "llm", "host", default=DEFAULT_HOST),
+        help=f"LLM API base URL (env: SHELLMANDO_HOST, default: {DEFAULT_HOST})",
     )
     g.add_argument(
         "--starter",
-        default=_resolve("MICROAGENT_STARTER", "llm", "starter", default=None),
-        help="Script to start the LLM if it is not running (env: MICROAGENT_STARTER)",
+        default=_resolve("SHELLMANDO_LLM_STARTER", "llm", "starter", default=None),
+        help="Script to start the LLM if it is not running (env: SHELLMANDO_LLM_STARTER)",
     )
     g.add_argument(
         "--model",
-        default=_resolve("MICROAGENT_MODEL", "llm", "model", default=DEFAULT_MODEL),
+        default=_resolve("SHELLMANDO_MODEL", "llm", "model", default=DEFAULT_MODEL),
         help=f"Model name (default: {DEFAULT_MODEL})",
     )
 
@@ -564,8 +564,8 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     g2.add_argument(
         "--os",
         dest="os_hint",
-        default=_resolve("MICROAGENT_OS", "generation", "os", default=""),
-        help="OS context string for the system prompt (env: MICROAGENT_OS)",
+        default=_resolve("SHELLMANDO_OS", "generation", "os", default=""),
+        help="OS context string for the system prompt (env: SHELLMANDO_OS)",
     )
     g2.add_argument(
         "--system-prompt",
@@ -602,9 +602,9 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         "-o", "--output",
         type=Path,
         default=Path(os.path.expanduser(
-            _resolve("MICROAGENT_OUTPUT", "output", "dir", default=DEFAULT_OUTPUT_DIR)
+            _resolve("SHELLMANDO_OUTPUT", "output", "dir", default=DEFAULT_OUTPUT_DIR)
         )),
-        help=f"Output folder for saved scripts (env: MICROAGENT_OUTPUT, default: {DEFAULT_OUTPUT_DIR})",
+        help=f"Output folder for saved scripts (env: SHELLMANDO_OUTPUT, default: {DEFAULT_OUTPUT_DIR})",
     )
     g4.add_argument(
         "--prompt-file",
@@ -657,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # 2. Build prompts --------------------------------------------------
-    if args.os_hint == "" and os.environ.get("MICROAGENT_OS") is None:
+    if args.os_hint == "" and os.environ.get("SHELLMANDO_OS") is None:
         args.os_hint = detect_os()
 
     if args.justanswer:

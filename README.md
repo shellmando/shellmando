@@ -9,7 +9,7 @@ Describe what you need in plain English or any language your local LLM supports 
 - Generate shell commands (bash, sh, zsh, fish) and Python code from natural language
 - One-liner results are injected directly into your shell prompt for review before execution
 - Multi-line scripts are automatically saved to organized, timestamped directories
-- Auto-starts your local LLM if it isn't running (configurable via `MICROAGENT_STARTER`)
+- Auto-starts your local LLM if it isn't running (configurable via `SHELLMANDO_LLM_STARTER`)
 - Pretty-prints saved scripts with `bat`/`batcat` when available
 - Optional [Atuin](https://github.com/atuinsh/atuin) history integration
 - Zero pip dependencies -- uses only the Python standard library
@@ -26,7 +26,7 @@ Describe what you need in plain English or any language your local LLM supports 
 
 ```bash
 mkdir -p ~/scripts
-cp microagent.py ~/scripts/
+cp shellmando.py ~/scripts/
 cp shdo.sh ~/scripts/
 ```
 
@@ -39,10 +39,9 @@ echo 'source ~/scripts/shdo.sh' >> ~/.bashrc
 3. (Optional) Configure environment variables in your shell profile:
 
 ```bash
-export MICROAGENT_HOST="http://localhost:8280"   # LLM API base URL
-export MICROAGENT_STARTER="$HOME/scripts/start_llm.sh"  # script to auto-start LLM
-export MICROAGENT_MODEL="default"                # model name
-export MICROAGENT_OUTPUT="$HOME/scripts/microagent_out"  # where scripts are saved
+export SHELLMANDO_HOST="http://localhost:8280"   # LLM API base URL
+export SHELLMANDO_LLM_STARTER="$HOME/scripts/start_llm.sh"  # script to auto-start LLM
+export SHELLMANDO_OUTPUT="$HOME/scripts/shellmando_out"  # where scripts are saved
 ```
 
 ## Usage
@@ -80,7 +79,7 @@ The generated command (e.g. `find . -size +100M`) lands in your readline prompt 
 ask -m python "read users.csv and print the top 5 rows sorted by age"
 ```
 
-Multi-line results are saved to `~/scripts/microagent_out/YYYYMMDD/` and the execution command is placed in your prompt.
+Multi-line results are saved to `~/scripts/shellmando_out/YYYYMMDD/` and the execution command is placed in your prompt.
 
 ### Use higher temperature for more creative output
 
@@ -103,7 +102,7 @@ With `--raw`, the unprocessed LLM response is printed to stdout -- useful for pi
 shellmando has two layers:
 
 1. **`shdo.sh`** -- a thin bash function (`ask`) that handles flag parsing, temp-file management, and readline injection.
-2. **`microagent.py`** -- the Python backend that manages LLM health checks, builds prompts, queries the model, and processes the response.
+2. **`shellmando.py`** -- the Python backend that manages LLM health checks, builds prompts, queries the model, and processes the response.
 
 When a result is a single short command it is injected into your shell prompt via readline. When the result is a longer script it is saved to disk, pretty-printed, and the run command is placed in your prompt instead.
 

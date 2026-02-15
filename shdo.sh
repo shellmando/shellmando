@@ -1,5 +1,5 @@
 # --------------------------------------------------------------------------
-# ask() – thin shell wrapper around microagent.py
+# ask() – thin shell wrapper around shellmando.py
 #
 # Source this file from your .bashrc / .zshrc:
 #   source ~/scripts/ask.bash
@@ -8,15 +8,15 @@
 # Override these via environment if you like:
 : "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
 export SHELLMANDO_DIR
-: "${MICROAGENT_PY:=${SHELLMANDO_DIR}/microagent.py}"
-: "${MICROAGENT_HOST:=http://localhost:8280}"
-: "${MICROAGENT_STARTER:=${SHELLMANDO_DIR}/start_llm.sh}"
-: "${MICROAGENT_OUTPUT:=${SHELLMANDO_DIR}/generated}"
-: "${MICROAGENT_CONFIG:=}"   # path to TOML config (empty = auto-detect)
-export MICROAGENT_OUTPUT
+: "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
+: "${SHELLMANDO_HOST:=http://localhost:8280}"
+: "${SHELLMANDO_LLM_STARTER:=${SHELLMANDO_DIR}/start_llm.sh}"
+: "${SHELLMANDO_OUTPUT:=${SHELLMANDO_DIR}/generated}"
+: "${SHELLMANDO_CONFIG:=}"   # path to TOML config (empty = auto-detect)
+export SHELLMANDO_OUTPUT
 
 function ask() {
-    # -- collect flags that we forward to microagent.py -------------------
+    # -- collect flags that we forward to shellmando.py -------------------
     local -a py_args=()
     local OPTIND opt
     local snippet_mode=false
@@ -34,7 +34,7 @@ function ask() {
             --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
-            --help|-h)        python3 "$MICROAGENT_PY" --help; return 0 ;;
+            --help|-h)        python3 "$SHELLMANDO_PY" --help; return 0 ;;
             --)               shift; break ;;
             -*)               echo "Unknown flag: $1 (try --help)"; return 1 ;;
             *)                break ;;       # first non-flag word → task starts
@@ -48,20 +48,20 @@ function ask() {
 
     # -- temp file for the readline payload ------------------------------
     local prompt_file
-    prompt_file=$(mktemp /tmp/microagent_prompt.XXXXXX)
+    prompt_file=$(mktemp /tmp/shellmando_prompt.XXXXXX)
     trap 'rm -f "$prompt_file"' RETURN
 
     # -- call the python backend -----------------------------------------
     local -a base_args=(
-        --host "$MICROAGENT_HOST"
-        --starter "$MICROAGENT_STARTER"
-        --output "$MICROAGENT_OUTPUT"
+        --host "$SHELLMANDO_HOST"
+        --starter "$SHELLMANDO_LLM_STARTER"
+        --output "$SHELLMANDO_OUTPUT"
         --prompt-file "$prompt_file"
     )
-    [[ -n "$MICROAGENT_CONFIG" ]] && base_args+=(--config "$MICROAGENT_CONFIG")
+    [[ -n "$SHELLMANDO_CONFIG" ]] && base_args+=(--config "$SHELLMANDO_CONFIG")
 
     local exit_code
-    python3 "$MICROAGENT_PY" \
+    python3 "$SHELLMANDO_PY" \
         "${base_args[@]}" \
         "${py_args[@]}" \
         -- "$@"
