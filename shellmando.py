@@ -478,6 +478,26 @@ def display_code(path: Path, verbose: bool) -> None:
         log(f"\n{line}\n")
 
 
+def display_diff(old: Path, new: Path, verbose: bool) -> None:
+    """Show differences between *old* and *new* using bat --diff or diff."""
+    bat = shutil.which("bat") or shutil.which("batcat")
+    if bat:
+        subprocess.run(
+            [bat, "--paging=never", "--diff", str(old), str(new)],
+            check=False,
+        )
+        log("\n")
+    else:
+        diff = shutil.which("diff")
+        if diff:
+            subprocess.run(
+                [diff, "--color=auto", "-u", str(old), str(new)],
+                check=False,
+            )
+        else:
+            log("(diff not available)", verbose=True)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -769,6 +789,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # -- File operation: write result to target file ---------------------
     if file_op is not None:
+        bak_file = target_file.with_suffix(target_file.suffix + ".bak")
+        if target_file.exists():
+            shutil.copy2(target_file, bak_file)
         if file_op == "edit":
             target_file.write_text(cleaned + "\n", encoding="utf-8")
             log(f"Wrote: {target_file}", verbose=True)
@@ -778,7 +801,10 @@ def main(argv: list[str] | None = None) -> int:
                     f.write("\n")
                 f.write("\n" + cleaned + "\n")
             log(f"Appended to: {target_file}", verbose=True)
-        display_code(target_file, verbose=True)
+        if bak_file.exists():
+            display_diff(bak_file, target_file, verbose=True)
+        else:
+            display_code(target_file, verbose=True)
         return 0
 
     # Snippet mode: display + clipboard, nothing else -------------------
