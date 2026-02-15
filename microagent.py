@@ -34,6 +34,7 @@ Communication contract with the shell wrapper
 from __future__ import annotations
 
 import argparse
+import platform
 import ast
 import json
 import os
@@ -69,10 +70,12 @@ DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
 DEFAULT_STARTUP_TIMEOUT = 50
 DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/microagent_out")
+SHELLMANDO_DIR=os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
 CODE_MODES = {"python"}
-ALL_MODES = SHELL_MODES | CODE_MODES
+NO_MODES = {"none"}
+ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
 
 _CONFIG_SEARCH_PATHS: list[Path] = [
     Path.home() / ".config" / "shellmando" / "config.toml",
@@ -146,8 +149,6 @@ def log(msg: str, *, verbose: bool = True) -> None:
 
 def detect_os() -> str:
     """Return a short OS description for the system prompt."""
-    import platform
-
     parts: list[str] = [platform.system()]
     if platform.system() == "Linux":
         try:
@@ -168,6 +169,36 @@ def detect_os() -> str:
 def python_version_str() -> str:
     v = sys.version_info
     return f"{v.major}.{v.minor}"
+
+
+def _detect_clipboard_cmd() -> list[str] | None:
+    """Find a clipboard copy command available on this system."""
+    if platform.system() == "Darwin":
+        if shutil.which("pbcopy"):
+            return ["pbcopy"]
+    elif os.environ.get("WAYLAND_DISPLAY"):
+        if shutil.which("wl-copy"):
+            return ["wl-copy"]
+    if shutil.which("xclip"):
+        return ["xclip", "-selection", "clipboard"]
+    if shutil.which("xsel"):
+        return ["xsel", "--clipboard", "--input"]
+    return None
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy *text* to the system clipboard.  Return True on success."""
+    cmd = _detect_clipboard_cmd()
+    if cmd is None:
+        return False
+    try:
+        proc = subprocess.run(
+            cmd, input=text.encode(), check=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.CalledProcessError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +256,7 @@ def _prompt_variables(mode: str, os_hint: str) -> dict[str, str]:
     }
 
 
-def build_system_prompt(mode: str, os_hint: str, cfg: dict | None = None) -> str:
+def build_system_prompt(mode: str, os_hint: str, snippet: bool, cfg: dict | None = None) -> str:
     cfg = cfg or {}
     tvars = _prompt_variables(mode, os_hint)
 
@@ -243,15 +274,14 @@ def build_system_prompt(mode: str, os_hint: str, cfg: dict | None = None) -> str
 
     if mode == "python":
         tpl = _deep_get(cfg, "prompts", "python", "system", default=None)
+        res = ""
         if tpl:
-            return expand_prompt_template(tpl, tvars)
-        os_part = f" on {os_hint}" if os_hint else ""
-        return (
-            f"You are a Python {python_version_str()} expert{os_part}. "
-            "Reply ONLY with Python code. No explanation, no prose."
+            res = expand_prompt_template(tpl, tvars)
+        return (res +
+            "Use a simple snippet with no functions if possible. " if snippet else "Use functions and call the entry function. "
         )
 
-    return f"You are a helpful coding assistant for {mode}."
+    return ""
 
 
 def build_user_prompt(user_prompt: str, mode: str, os_hint: str, cfg: dict | None = None) -> str:
@@ -429,8 +459,9 @@ def save_script(
 def display_code(path: Path, verbose: bool) -> None:
     """Pretty-print the saved file using bat (if available) or plain cat."""
     bat = shutil.which("bat") or shutil.which("batcat")
+    line = shutil.get_terminal_size().columns * "_"
     if bat:
-        subprocess.run([bat, "--paging=never", str(path)], check=False)
+        subprocess.run([bat, "--paging=never", "--style=-numbers", str(path)], check=False)
         log("\n")
     else:
         line = shutil.get_terminal_size().columns * "_"
@@ -591,6 +622,11 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="Print raw LLM output to stdout and exit (skip all processing)",
     )
+    g4.add_argument(
+        "-s", "--snippet",
+        action="store_true",
+        help="Generate snippet only: display, copy to clipboard, no file saved",
+    )
 
     return p
 
@@ -618,7 +654,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.os_hint == "" and os.environ.get("MICROAGENT_OS") is None:
         args.os_hint = detect_os()
 
-    system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint, cfg)
+    system_prompt: str = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
 
     # Apply config-driven user prompt prefix/suffix (Python mode uses
     # config templates instead of hardcoded wrapping when available)
@@ -630,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
         user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
     elif args.mode == "python":
         # Fallback to original hardcoded behaviour
-        user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
+        user_prompt = f"In Python {python_version_str()}: {user_prompt}"
     elif args.mode in SHELL_MODES:
         user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
 
@@ -661,6 +697,20 @@ def main(argv: list[str] | None = None) -> int:
     # 4. Process response -----------------------------------------------
     cleaned = strip_fences(raw_content)
 
+    # Snippet mode: display + clipboard, nothing else -------------------
+    if args.snippet:
+        line='_' * shutil.get_terminal_size().columns
+        log(line)
+        log(cleaned, verbose=True)
+        log(line)
+        if copy_to_clipboard(cleaned):
+            log("  >> copied to clipboard", verbose=True)
+        else:
+            log("  >> clipboard not available – use the output above", verbose=True)
+            if platform.system() == "Linux":
+                log(" >> suggest installing xclip: sudo apt install xclip")
+        return 0
+
     # Shell modes -------------------------------------------------------
     if is_oneliner(cleaned):
         # Write to prompt file for readline injection
@@ -677,6 +727,10 @@ def main(argv: list[str] | None = None) -> int:
         label="script",
         make_executable=True,
     )
+    try:
+        p = p.relative_to(SHELLMANDO_DIR)
+    except:
+        pass
     display_code(p, verbose=True)
 
     # For the shell wrapper: the "one-liner" to inject is executing the script

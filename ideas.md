@@ -1,8 +1,8 @@
 # ideas for implementation
 
-## --snippet
+## ~~--snippet~~ (implemented)
 
-only generate the snippet / code needed. This is pasted to clipboard
+~~only generate the snippet / code needed. This is pasted to clipboard~~
 
 ## update shell instructions
 

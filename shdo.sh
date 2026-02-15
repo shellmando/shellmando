@@ -6,21 +6,26 @@
 # --------------------------------------------------------------------------
 
 # Override these via environment if you like:
-: "${MICROAGENT_PY:=${HOME}/scripts/microagent.py}"
+: "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
+export SHELLMANDO_DIR
+: "${MICROAGENT_PY:=${SHELLMANDO_DIR}/microagent.py}"
 : "${MICROAGENT_HOST:=http://localhost:8280}"
-: "${MICROAGENT_STARTER:=${HOME}/scripts/start_llm.sh}"
-: "${MICROAGENT_OUTPUT:=${HOME}/scripts/microagent_out}"
+: "${MICROAGENT_STARTER:=${SHELLMANDO_DIR}/start_llm.sh}"
+: "${MICROAGENT_OUTPUT:=${SHELLMANDO_DIR}/generated}"
 : "${MICROAGENT_CONFIG:=}"   # path to TOML config (empty = auto-detect)
+export MICROAGENT_OUTPUT
 
 function ask() {
     # -- collect flags that we forward to microagent.py -------------------
     local -a py_args=()
     local OPTIND opt
+    local snippet_mode=false
 
     # quick pre-scan: pass everything before the bare task words
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
+            -s|--snippet)     py_args+=("$1"); snippet_mode=true; shift   ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
@@ -73,7 +78,7 @@ function ask() {
         cmd="$stdout_capture"
     fi
 
-    if [[ -z "$cmd" ]]; then
+    if [[ -z "$cmd" && ! snippet_mode ]]; then
         echo "(no result)" >&2
         return 1
     fi

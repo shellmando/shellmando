@@ -59,11 +59,10 @@ Use variables only if necessary."""
 
 [prompts.python]
 system = """\
-You are a Python {python_version} expert on {os}. \
 Reply ONLY with Python code. No explanation, no prose."""
 
 user_prefix = "In Python {python_version}: "
 
 user_suffix = """\
-. Give me only the Python code use comprehensio, \
-modern type hints and functions and call the entry function, no explanation."""
+. Give me only the Python code use comprehension, \
+modern type hints"""
