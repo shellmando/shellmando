@@ -20,12 +20,14 @@ function ask() {
     local -a py_args=()
     local OPTIND opt
     local snippet_mode=false
+    local justanswer=false
 
     # quick pre-scan: pass everything before the bare task words
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
             -s|--snippet)     py_args+=("$1"); snippet_mode=true; shift   ;;
+            -j|--justanswer)  py_args+=("$1"); justanswer=true; shift ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
@@ -68,6 +70,11 @@ function ask() {
     # -- interpret the result --------------------------------------------
     if [[ $exit_code -eq 1 ]]; then
         return 1
+    fi
+
+    # justanswer: answer already printed to stdout, nothing else to do
+    if [[ $justanswer -eq 1 ]]; then
+        return 0
     fi
 
     # exit_code == 0  →  one-liner
