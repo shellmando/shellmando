@@ -46,6 +46,7 @@ import textwrap
 import time
 import urllib.error
 import urllib.request
+import difflib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,7 +71,7 @@ DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
 DEFAULT_STARTUP_TIMEOUT = 50
 DEFAULT_OUTPUT_DIR = os.path.expanduser("~/scripts/shellmando_out")
-SHELLMANDO_DIR=os.environ.get("SHELLMANDO_DIR", os.path.curdir)
+SHELLMANDO_DIR = os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
 CODE_MODES = {"python"}
@@ -86,6 +87,7 @@ _CONFIG_SEARCH_PATHS: list[Path] = [
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 def _find_config(explicit: str | None = None) -> Path | None:
     """Locate the first existing config file.
@@ -130,6 +132,7 @@ def expand_prompt_template(template: str, variables: dict[str, str]) -> str:
 
     Unknown placeholders are left as-is so partial templates are safe.
     """
+
     class SafeDict(dict):
         def __missing__(self, key: str) -> str:
             return "{" + key + "}"
@@ -140,6 +143,7 @@ def expand_prompt_template(template: str, variables: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def log(msg: str, *, verbose: bool = True) -> None:
     """Print to stderr so stdout stays clean for the shell wrapper."""
@@ -193,8 +197,11 @@ def copy_to_clipboard(text: str) -> bool:
         return False
     try:
         proc = subprocess.run(
-            cmd, input=text.encode(), check=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cmd,
+            input=text.encode(),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         return proc.returncode == 0
     except (OSError, subprocess.CalledProcessError):
@@ -204,6 +211,7 @@ def copy_to_clipboard(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # LLM interaction
 # ---------------------------------------------------------------------------
+
 
 def health_check(host: str, timeout: float = 0.5) -> bool:
     req = urllib.request.Request(f"{host}/health", method="GET")
@@ -277,8 +285,10 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, cfg: dict | None
         res = ""
         if tpl:
             res = expand_prompt_template(tpl, tvars)
-        return (res +
-            "Use a simple snippet with no functions if possible. " if snippet else "Use functions and call the entry function. "
+        return (
+            res + "Use a simple snippet with no functions if possible. "
+            if snippet
+            else "Use functions and call the entry function. "
         )
 
     return ""
@@ -319,14 +329,16 @@ def query_llm(
 ) -> str | None:
     """Send a chat-completion request; return the assistant content or None."""
     url = f"{host}/v1/chat/completions"
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": temperature,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+        }
+    ).encode()
 
     headers = {"Content-Type": "application/json"}
 
@@ -335,11 +347,7 @@ def query_llm(
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode())
-            content: str | None = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content")
-            )
+            content: str | None = data.get("choices", [{}])[0].get("message", {}).get("content")
             if verbose:
                 log(f"[llm] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
             return content
@@ -386,14 +394,15 @@ def is_oneliner(text: str) -> bool:
     return "\n" not in text and len(text) < 512
 
 
-def _get_mapping(): 
-     return {
+def _get_mapping():
+    return {
         "python": ".py",
         "bash": ".sh",
         "sh": ".sh",
         "zsh": ".zsh",
         "fish": ".fish",
     }
+
 
 def extension_for_mode(mode: str) -> str:
     return _get_mapping().get(mode, ".txt")
@@ -405,30 +414,26 @@ def mode_from_extension(filepath: Path) -> str | None:
     return ext_map.get(filepath.suffix.lower())
 
 
-def find_label(
-    initial_label: str,
-    content: str
-) -> str:
+def find_label(initial_label: str, content: str) -> str:
     content = content.strip()
     try:
         tree = ast.parse(content)
         outermost_names: list[str] = []
-        
+
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 outermost_names.append(node.name)
             elif isinstance(node, ast.ClassDef):
                 outermost_names.append(node.name)
-        
-        # Filter out 'main' and get the last one
-        filtered_names = [name for name in outermost_names if name != 'main']
 
-        if len(filtered_names) > 0:    
+        # Filter out 'main' and get the last one
+        filtered_names = [name for name in outermost_names if name != "main"]
+
+        if len(filtered_names) > 0:
             return filtered_names[-1] if filtered_names else None
 
     except SyntaxError as e:
         pass
-    
 
     curtime = datetime.now(tz=timezone.utc).strftime("%H%M%S")
     return f"script_{curtime}" if initial_label == "script" else initial_label
@@ -480,12 +485,12 @@ def display_code(path: Path, verbose: bool) -> None:
 
 def display_diff(old: Path, new: Path, verbose: bool) -> None:
     """Show differences between *old* and *new* using bat --diff or diff."""
+    lines1 = old.read_text().splitlines(keepends=True)
+    lines2 = new.read_text().splitlines(keepends=True)
+    difftxt = "".join(difflib.unified_diff(lines1, lines2, fromfile=str(old), tofile=str(new)))
     bat = shutil.which("bat") or shutil.which("batcat")
     if bat:
-        subprocess.run(
-            [bat, "--paging=never", "--diff", str(old), str(new)],
-            check=False,
-        )
+        subprocess.run(["batcat", "--language", "diff"], input=difftxt, text=True)
         log("\n")
     else:
         diff = shutil.which("diff")
@@ -495,12 +500,13 @@ def display_diff(old: Path, new: Path, verbose: bool) -> None:
                 check=False,
             )
         else:
-            log("(diff not available)", verbose=True)
+            log(difftxt)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def _pre_parse_config(argv: list[str] | None) -> tuple[Path | None, dict]:
     """Extract ``--config`` from *argv* before argparse runs, load the file."""
@@ -541,12 +547,14 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         prog="shellmando",
         description="Query a local LLM for shell commands or code snippets.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=textwrap.dedent("""\
+        epilog=textwrap.dedent(
+            """\
             examples:
               shellmando "list all docker containers sorted by size"
               shellmando -m python "read a CSV and plot column 3"
               shellmando -v -t 0.5 "find duplicate files in /data"
-        """),
+        """
+        ),
     )
     p.add_argument("task", nargs="+", help="Natural-language task description")
 
@@ -578,13 +586,15 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     # Generation
     g2 = p.add_argument_group("Generation")
     g2.add_argument(
-        "-t", "--temperature",
+        "-t",
+        "--temperature",
         type=float,
         default=float(_resolve(None, "generation", "temperature", default=DEFAULT_TEMPERATURE)),
         help=f"Sampling temperature (default: {DEFAULT_TEMPERATURE})",
     )
     g2.add_argument(
-        "-m", "--mode",
+        "-m",
+        "--mode",
         choices=sorted(ALL_MODES),
         default=_resolve(None, "generation", "mode", default=None),
         help="Language / shell mode (default: bash)",
@@ -604,22 +614,26 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     # Network / resilience
     g3 = p.add_argument_group("Network / resilience")
     g3.add_argument(
-        "--timeout", type=float,
+        "--timeout",
+        type=float,
         default=float(_resolve(None, "network", "timeout", default=DEFAULT_TIMEOUT)),
         help="HTTP timeout in seconds",
     )
     g3.add_argument(
-        "--retries", type=int,
+        "--retries",
+        type=int,
         default=int(_resolve(None, "network", "retries", default=DEFAULT_RETRIES)),
         help="Max retries for the LLM call",
     )
     g3.add_argument(
-        "--retry-delay", type=float,
+        "--retry-delay",
+        type=float,
         default=float(_resolve(None, "network", "retry_delay", default=DEFAULT_RETRY_DELAY)),
         help="Seconds between retries",
     )
     g3.add_argument(
-        "--startup-timeout", type=float,
+        "--startup-timeout",
+        type=float,
         default=float(_resolve(None, "network", "startup_timeout", default=DEFAULT_STARTUP_TIMEOUT)),
         help="Max seconds to wait for LLM startup",
     )
@@ -627,11 +641,10 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     # Output
     g4 = p.add_argument_group("Output")
     g4.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
-        default=Path(os.path.expanduser(
-            _resolve("SHELLMANDO_OUTPUT", "output", "dir", default=DEFAULT_OUTPUT_DIR)
-        )),
+        default=Path(os.path.expanduser(_resolve("SHELLMANDO_OUTPUT", "output", "dir", default=DEFAULT_OUTPUT_DIR))),
         help=f"Output folder for saved scripts (env: SHELLMANDO_OUTPUT, default: {DEFAULT_OUTPUT_DIR})",
     )
     g4.add_argument(
@@ -641,15 +654,16 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         help="File to write the one-liner into (for shell wrapper integration)",
     )
     g4.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Forward full LLM response and debug info to stderr",
     )
     g4.add_argument(
-        "-j", "--justanswer",
+        "-j",
+        "--justanswer",
         action="store_true",
-        help="Just answer the question: print the LLM reply and exit "
-             "(no prompt adaptation, no file generated)",
+        help="Just answer the question: print the LLM reply and exit " "(no prompt adaptation, no file generated)",
     )
     g4.add_argument(
         "--raw",
@@ -657,22 +671,25 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         help="Print raw LLM output to stdout and exit (skip all processing)",
     )
     g4.add_argument(
-        "-s", "--snippet",
+        "-s",
+        "--snippet",
         action="store_true",
         help="Generate snippet only: display, copy to clipboard, no file saved",
     )
-    
+
     # File operations
     g5 = p.add_argument_group("File operations")
     g5.add_argument(
-        "-e", "--edit",
+        "-e",
+        "--edit",
         type=Path,
         default=None,
         metavar="FILE",
         help="Send FILE content with the prompt; write the result back (edit in place)",
     )
     g5.add_argument(
-        "-a", "--append",
+        "-a",
+        "--append",
         type=Path,
         default=None,
         metavar="FILE",
@@ -749,7 +766,7 @@ def main(argv: list[str] | None = None) -> int:
         user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
 
     if (args.edit or args.append) and len(file_content) > 0:
-        fcontent = f"\n```{args.mode}\n{file_content}```\n" 
+        fcontent = f"\n```{args.mode}\n{file_content}```\n"
         if args.edit:
             edit_instruction = f". Please edit the file: {fcontent}"
         else:
@@ -809,7 +826,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Snippet mode: display + clipboard, nothing else -------------------
     if args.snippet:
-        line='_' * shutil.get_terminal_size().columns
+        line = "_" * shutil.get_terminal_size().columns
         log(line)
         log(cleaned, verbose=True)
         log(line)
