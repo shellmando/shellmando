@@ -113,8 +113,9 @@ do_install() {
     mkdir -p "$LIB_DIR"
     cp "$SCRIPT_DIR/shellmando.py" "$LIB_DIR/shellmando.py"
     cp "$SCRIPT_DIR/shellmando.sh" "$LIB_DIR/shellmando.sh"
-    chmod +x "$LIB_DIR/shellmando.py"
-    info "Copied shellmando.py and shellmando.sh to ${LIB_DIR}"
+    cp "$SCRIPT_DIR/shellmando_start_llm.sh" "$LIB_DIR/shellmando_start_llm.sh"
+    chmod +x "$LIB_DIR/shellmando_start_llm.sh"
+    info "Copied shellmando.py, shellmando.sh and shellmando_start_llm.sh to ${LIB_DIR}"
 
     # 2. Copy example config (if not already present)
     if $install_config; then

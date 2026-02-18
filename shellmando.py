@@ -66,10 +66,10 @@ except ModuleNotFoundError:
 DEFAULT_HOST = "http://localhost:8280"
 DEFAULT_MODEL = "default"
 DEFAULT_TEMPERATURE = 0.1
-DEFAULT_TIMEOUT = 120
+DEFAULT_TIMEOUT = 180
+DEFAULT_STARTUP_TIMEOUT = 50
 DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
-DEFAULT_STARTUP_TIMEOUT = 50
 DEFAULT_CONFIG_HOME = os.environ.get(
     "XDG_CONFIG_HOME", os.path.expanduser("~/.config")
 )
@@ -219,13 +219,18 @@ def copy_to_clipboard(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def health_check(host: str, timeout: float = 0.5) -> bool:
-    req = urllib.request.Request(f"{host}/health", method="GET")
+def health_check(host: str, timeout: float = 0.5) -> tuple[bool, bool]:
     try:
+        req = urllib.request.Request(f"{host}/health", method="GET")
         with urllib.request.urlopen(req, timeout=timeout):
-            return True
+            return True, True # running, llama_server
     except Exception:
-        return False
+        req = urllib.request.Request(f"{host}", method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout):
+                return True, False # running, ollama
+        except Exception:
+            return False, False
 
 
 def ensure_llm_running(
@@ -233,32 +238,31 @@ def ensure_llm_running(
     starter: str | None,
     startup_timeout: float,
     verbose: bool,
-) -> bool:
+) -> tuple[bool, bool]:
     """Return True when the LLM is reachable."""
-    if health_check(host):
-        return True
+    running, llama_server = health_check(host)
+    if running:
+        return running, llama_server
 
     if not starter:
         log("Error: LLM not reachable and no --starter provided.", verbose=True)
-        return False
+        return False, False
 
     log("Starting local LLM …", verbose=True)
     subprocess.Popen(
-        [starter],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        [starter]
     )
     time.sleep(5)
 
     deadline = time.monotonic() + startup_timeout
     while time.monotonic() < deadline:
         if health_check(host, timeout=1.0):
-            log("LLM is ready.", verbose=True)
-            return True
+            log("LLM is ready.", verbose=verbose)
+            return True, llama_server
         time.sleep(0.5)
 
     log(f"Error: LLM did not start within {startup_timeout}s.", verbose=True)
-    return False
+    return False, False
 
 
 def _prompt_variables(mode: str, os_hint: str) -> dict[str, str]:
@@ -282,7 +286,6 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, cfg: dict | None
         os_part = f" on {os_hint}" if os_hint else ""
         return (
             f"You are a {mode} expert{os_part}. "
-            "Reply ONLY with the needed command(s), no explanation. "
             "Use variables only if necessary."
         )
 
@@ -294,35 +297,60 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, cfg: dict | None
         return (
             res + "Use a simple snippet with no functions if possible. "
             if snippet
-            else "Use functions and call the entry function. "
+            else res
         )
 
     return ""
 
 
-def build_user_prompt(user_prompt: str, mode: str, os_hint: str, cfg: dict | None = None) -> str:
-    """Apply config-driven prefix/suffix to the user prompt."""
-    cfg = cfg or {}
-    tvars = _prompt_variables(mode, os_hint)
+def query_llm_ollama(
+    host: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    timeout: float,
+    retries: int,
+    retry_delay: float,
+    verbose: bool,
+) -> str | None:
+    """Send a chat request to Ollama; return the assistant content or None."""
+    url = f"{host}/api/chat"
+    payload = json.dumps(
+        {
+            "model": "hf.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "options": {"temperature": temperature},
+            "stream": False,
+        }
+    ).encode()
 
-    if mode in SHELL_MODES:
-        prefix = _deep_get(cfg, "prompts", "shell", "user_prefix", default="")
-        suffix = _deep_get(cfg, "prompts", "shell", "user_suffix", default="")
-    elif mode == "python":
-        prefix = _deep_get(cfg, "prompts", "python", "user_prefix", default="")
-        suffix = _deep_get(cfg, "prompts", "python", "user_suffix", default="")
-    else:
-        prefix, suffix = "", ""
+    headers = {"Content-Type": "application/json"}
 
-    if prefix:
-        prefix = expand_prompt_template(prefix, tvars)
-    if suffix:
-        suffix = expand_prompt_template(suffix, tvars)
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode())
+            content: str | None = data.get("message", {}).get("content")
+            if verbose:
+                log(f"[llm-ollama] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
+            return content
+        except urllib.error.URLError as exc:
+            import traceback
+            log(traceback.format_exc())
+            log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
+            if attempt < retries:
+                time.sleep(retry_delay)
 
-    return f"{prefix}{user_prompt}{suffix}"
+    log("Error: all retries exhausted.", verbose=True)
+    return None
 
 
-def query_llm(
+def query_llm_llama_server(
     host: str,
     model: str,
     system_prompt: str,
@@ -364,7 +392,6 @@ def query_llm(
 
     log("Error: all retries exhausted.", verbose=True)
     return None
-
 
 # ---------------------------------------------------------------------------
 # Response processing
@@ -539,16 +566,20 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         cfg = {}
 
     # Helper: resolve a setting with precedence env > config > hardcoded default
-    def _resolve(env_key: str | None, *cfg_keys: str, default):
+    def _resolve(env_key: str | None, *cfg_keys: str, default, debug: bool = False):
         if env_key:
             env_val = os.environ.get(env_key)
             if env_val is not None:
+                if debug:
+                    log(f"resolved env {env_key} as {env_val}")
                 return env_val
         cfg_val = _deep_get(cfg, *cfg_keys, default=None)
         if cfg_val is not None:
+            if debug:
+                log(f"resolved cfg {cfg_keys} as {cfg_val}")
             return cfg_val
         return default
-
+    
     p = argparse.ArgumentParser(
         prog="shellmando",
         description="Query a local LLM for shell commands or code snippets.",
@@ -742,7 +773,8 @@ def main(argv: list[str] | None = None) -> int:
         args.starter = os.path.expanduser(args.starter)
 
     # 1. Ensure LLM is available ----------------------------------------
-    if not ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose):
+    running, llama_server = ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose)
+    if not running:
         return 1
 
     # 2. Build prompts --------------------------------------------------
@@ -750,39 +782,29 @@ def main(argv: list[str] | None = None) -> int:
         args.os_hint = detect_os()
 
     if args.justanswer:
-        system_prompt = args.system_prompt or "You are a helpful assistant."
+        system_prompt = args.system_prompt or "You are a helpful assistant. Keep your answer short, focused and precise. Show only the best option."
     else:
         system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
 
     if not args.justanswer and args.mode == "python" and file_op is None:
-        user_prompt = f"In Python {python_version_str()}: {user_prompt}. Give me only the Python code use comprehensio, modern type hints and functions and call the entry function, no explanation."
-
-    # Apply config-driven user prompt prefix/suffix (Python mode uses
-    # config templates instead of hardcoded wrapping when available)
-    has_python_prompt_cfg = (
-        _deep_get(cfg, "prompts", "python", "user_prefix", default=None) is not None
-        or _deep_get(cfg, "prompts", "python", "user_suffix", default=None) is not None
-    )
-    if args.mode == "python" and has_python_prompt_cfg:
-        user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
-    elif args.mode == "python":
-        # Fallback to original hardcoded behaviour
-        user_prompt = f"In Python {python_version_str()}: {user_prompt}"
-    elif args.mode in SHELL_MODES:
-        user_prompt = build_user_prompt(user_prompt, args.mode, args.os_hint, cfg)
+        system_prompt = f"{system_prompt} Create at least one well named function and call it in the main block"
 
     if (args.edit or args.append) and len(file_content) > 0:
         fcontent = f"\n```{args.mode}\n{file_content}```\n"
         if args.edit:
-            edit_instruction = f". Please edit the file: {fcontent}"
+            edit_instruction = f". Edit the code in-place: ```{args.mode}\n{fcontent}\n```"
         else:
-            edit_instruction = f". Current file content is: {fcontent}. Please give me only your additions. "
+            edit_instruction = f". Current code is: ```{args.mode}\n{fcontent}\n```. Give me ONLY your additions - I will add them manually! "
         user_prompt += edit_instruction
 
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
 
     # 3. Query LLM ------------------------------------------------------
+    if llama_server:
+        query_llm = query_llm_llama_server
+    else:
+        query_llm = query_llm_ollama
     raw_content = query_llm(
         host=args.host,
         model=args.model,
@@ -792,7 +814,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         retries=args.retries,
         retry_delay=args.retry_delay,
-        verbose=verbose,
+        verbose=verbose
     )
 
     if raw_content is None:
@@ -815,19 +837,35 @@ def main(argv: list[str] | None = None) -> int:
         bak_file = target_file.with_suffix(target_file.suffix + ".bak")
         if target_file.exists():
             shutil.copy2(target_file, bak_file)
-        if file_op == "edit":
-            target_file.write_text(cleaned + "\n", encoding="utf-8")
-            log(f"Wrote: {target_file}", verbose=True)
-        else:  # append
+        def append_changes():
             with target_file.open("a", encoding="utf-8") as f:
                 if file_content and not file_content.endswith("\n"):
                     f.write("\n")
                 f.write("\n" + cleaned + "\n")
             log(f"Appended to: {target_file}", verbose=True)
-        if bak_file.exists():
-            display_diff(bak_file, target_file, verbose=True)
+        if file_op == "edit":
+            target_file.write_text(cleaned + "\n", encoding="utf-8")
+            log(f"Wrote: {target_file}", verbose=True)
+        else:  # append
+            append_changes()
+        display_diff(bak_file, target_file, verbose=True)
+
+        # Ask user for action
+        print("\nDo you want to apply the changes")
+        choice = input("Enter your choice (y/n) - default y: ").strip()
+        
+        if choice == "y" or choice == "Y" or choice == "J" or choice == "":
+            log("done.", verbose=True)
         else:
-            display_code(target_file, verbose=True)
+            # Revert - restore from backup
+            os.remove(target_file)
+            shutil.move(bak_file, target_file)
+            log(f"Changes reverted from backup: {target_file}", verbose=True)
+            choice = input("retry (y/n) - default n: ").strip()
+            if choice == "y" or choice == "Y" or choice == "J":
+                log("Retrying")
+                new_temp = args.temperature - 0.1 if args.temperature > 0.2 else args.temperature-0.01
+                return main([*argv, "-t", str(new_temp)])
         return 0
 
     # Snippet mode: display + clipboard, nothing else -------------------

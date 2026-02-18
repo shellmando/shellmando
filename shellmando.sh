@@ -1,5 +1,5 @@
 # --------------------------------------------------------------------------
-# ask() – thin shell wrapper around shellmando.py
+# shellmando() – thin shell wrapper around shellmando.py
 #
 # Source this file from your .bashrc / .zshrc:
 #   source ~/.local/lib/shellmando/shellmando.sh
@@ -7,19 +7,27 @@
 
 # XDG Base Directory defaults
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
+export XDG_CONFIG_HOME
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
+export XDG_DATA_HOME
 
 # Override these via environment if you like:
 : "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
 export SHELLMANDO_DIR
-: "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
+: "${SHELLMANDO_MODELS_DIR}:=${SHELLMANDO_DIR}/models"
+export SHELLMANDO_MODELS_DIR
+: "${SHELLMANDO_MODEL}:=$(ls ${SHELLMANDO_MODELS_DIR} | head -n 1)"
+export SHELLMANDO_MODEL
 : "${SHELLMANDO_HOST:=http://localhost:8280}"
-: "${SHELLMANDO_LLM_STARTER:=${XDG_CONFIG_HOME}/shellmando/start_llm.sh}"
+export SHELLMANDO_HOST
+: "${SHELLMANDO_LLM_STARTER:=${SHELLMANDO_DIR}/shellmando_start_llm.sh}"
+export SHELLMANDO_LLM_STARTER
 : "${SHELLMANDO_OUTPUT:=${XDG_DATA_HOME}/shellmando}"
-: "${SHELLMANDO_CONFIG:=}"   # path to TOML config (empty = auto-detect)
 export SHELLMANDO_OUTPUT
+: "${SHELLMANDO_CONFIG:=}"   # path to TOML config (empty = auto-detect)
+: "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
 
-function ask() {
+function shellmando() {
     # -- collect flags that we forward to shellmando.py -------------------
     local -a py_args=()
     local OPTIND opt
@@ -48,7 +56,7 @@ function ask() {
     done
 
     if [[ $# -eq 0 ]]; then
-        echo "Usage: ask [options] <task …>" >&2
+        echo "Usage: shellmando [options] <task …>" >&2
         return 1
     fi
 
@@ -63,6 +71,7 @@ function ask() {
         --starter "$SHELLMANDO_LLM_STARTER"
         --output "$SHELLMANDO_OUTPUT"
         --prompt-file "$prompt_file"
+        --model "$SHELLMANDO_MODEL"
     )
     [[ -n "$SHELLMANDO_CONFIG" ]] && base_args+=(--config "$SHELLMANDO_CONFIG")
 
@@ -99,11 +108,11 @@ function ask() {
     run_prompt="${run_prompt##*$'\n'}"
     read -e -i "$cmd" -p "$run_prompt" final_cmd
     history -s "$final_cmd"
-    _ask_exec "$final_cmd"
+    _shellmando_exec "$final_cmd"
 }
 
 # -- helper: execute with optional atuin tracking ------------------------
-function _ask_exec() {
+function _shellmando_exec() {
     local final_cmd="$1"
     if command -v atuin &>/dev/null; then
         local atuin_id
@@ -116,3 +125,4 @@ function _ask_exec() {
         eval "$final_cmd"
     fi
 }
+

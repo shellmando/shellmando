@@ -18,7 +18,7 @@
 
 [llm]
 host = "http://localhost:8280"
-starter = "~/.config/shellmando/start_llm.sh"
+starter = " ~/.local/lib/shellmando/shellmando_start_llm.sh"
 model = "default"
 
 # -- Generation defaults ----------------------------------------------------
@@ -31,10 +31,10 @@ os = ""                        # leave empty to auto-detect
 # -- Network / resilience ---------------------------------------------------
 
 [network]
-timeout = 120                  # HTTP timeout per request (seconds)
+timeout = 180                  # HTTP timeout per request (seconds)
+startup_timeout = 50           # max seconds to wait for LLM startup
 retries = 30                   # max retry attempts
 retry_delay = 1.0              # seconds between retries
-startup_timeout = 50           # max seconds to wait for LLM startup
 
 # -- Output -----------------------------------------------------------------
 
@@ -45,8 +45,6 @@ dir = "~/.local/share/shellmando"
 #
 # Each mode section can define:
 #   system  - the system prompt sent to the LLM
-#   user_prefix - prepended to the user's task text
-#   user_suffix - appended to the user's task text
 #
 # All three fields support the template variables listed above.
 # If a section is missing the built-in defaults are used.
@@ -54,15 +52,11 @@ dir = "~/.local/share/shellmando"
 [prompts.shell]
 system = """\
 You are a {mode} expert on {os}. \
-Reply ONLY with the needed command(s), no explanation. \
+Reply ONLY with the needed command(s), NO explanation. \
 Use variables only if necessary."""
 
 [prompts.python]
 system = """\
-Reply ONLY with Python code. No explanation, no prose."""
-
-user_prefix = "In Python {python_version}: "
-
-user_suffix = """\
-. Give me only the Python code use comprehension, \
-modern type hints"""
+Reply ONLY with Python (>= {python_version}) code. \
+NO explanation, no prose. Don't repeat yourself: use functions. \
+Style: use comprehension instead of loops, modern type hints."""

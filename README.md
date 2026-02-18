@@ -38,7 +38,7 @@ This will place files into their XDG-compliant locations and source the shell wr
 
 ```bash
 mkdir -p ~/.local/lib/shellmando
-cp shellmando.py shellmando.sh ~/.local/lib/shellmando/
+cp shellmando.py shellmando.sh shellmando_start_llm.sh ~/.local/lib/shellmando/
 ```
 
 2. Source the shell wrapper in your `.bashrc` or `.zshrc`:
@@ -63,7 +63,6 @@ shellmando follows the [XDG Base Directory Specification](https://specifications
 | Path | Purpose |
 |------|---------|
 | `$XDG_CONFIG_HOME/shellmando/config.toml` | User configuration (default: `~/.config`) |
-| `$XDG_CONFIG_HOME/shellmando/start_llm.sh` | Optional LLM starter script |
 | `$XDG_DATA_HOME/shellmando/` | Generated scripts output (default: `~/.local/share`) |
 
 ### Environment variables
@@ -73,7 +72,7 @@ shellmando follows the [XDG Base Directory Specification](https://specifications
 | `SHELLMANDO_DIR` | Directory containing `shellmando.sh` and `shellmando.py` (auto-detected) |
 | `SHELLMANDO_PY` | Path to `shellmando.py` (defaults to `$SHELLMANDO_DIR/shellmando.py`) |
 | `SHELLMANDO_HOST` | LLM API base URL (default: `http://localhost:8280`) |
-| `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server (default: `$XDG_CONFIG_HOME/shellmando/start_llm.sh`) |
+| `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server (default: `$SHELLMANDO_DIR/shellmando_start_llm.sh`) |
 | `SHELLMANDO_OUTPUT` | Output directory for saved scripts (default: `$XDG_DATA_HOME/shellmando`) |
 | `SHELLMANDO_CONFIG` | Path to a TOML config file (empty = auto-detect) |
 | `SHELLMANDO_OS` | OS context string for the system prompt (auto-detected if unset) |
