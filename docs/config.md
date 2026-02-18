@@ -13,11 +13,11 @@ Settings are resolved in this order (highest wins):
 
 ## Config file locations
 
-shellmando searches for a config file in this order:
+shellmando follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) and searches for a config file in this order:
 
 1. Path given via `--config` CLI flag
 2. Path in the `SHELLMANDO_CONFIG` environment variable
-3. `~/.config/shellmando/config.toml`
+3. `$XDG_CONFIG_HOME/shellmando/config.toml` (default: `~/.config/shellmando/config.toml`)
 4. `shellmando.toml` next to `shellmando.py`
 
 The first file found is used. If no file is found, built-in defaults apply.
@@ -29,7 +29,7 @@ The first file found is used. If no file is found, built-in defaults apply.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `host` | string | `"http://localhost:8280"` | Base URL of the OpenAI-compatible LLM endpoint. |
-| `starter` | string | _(none)_ | Path to a script that starts the LLM server when it is not running. Supports `~` expansion. |
+| `starter` | string | `$XDG_CONFIG_HOME/shellmando/shellmando_start_llm.sh` | Path to a script that starts the LLM server when it is not running. Supports `~` expansion. |
 | `model` | string | `"default"` | Model name sent in the API request. |
 
 ### `[generation]` -- Generation defaults
@@ -53,7 +53,7 @@ The first file found is used. If no file is found, built-in defaults apply.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `"~/scripts/shellmando_out"` | Directory where generated multi-line scripts are saved. Supports `~` expansion. Scripts are organized into `YYYYMMDD/` subdirectories. |
+| `dir` | string | `$XDG_DATA_HOME/shellmando` | Directory where generated multi-line scripts are saved (default: `~/.local/share/shellmando`). Supports `~` expansion. Scripts are organized into `YYYYMMDD/` subdirectories. |
 
 ### `[prompts.*]` -- Prompt templates
 
@@ -67,8 +67,6 @@ Each section supports three keys:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `system` | string | _(built-in)_ | The system prompt sent to the LLM. |
-| `user_prefix` | string | `""` | Text prepended to the user's task description. |
-| `user_suffix` | string | `""` | Text appended to the user's task description. |
 
 If a section or key is missing, the built-in defaults are used.
 
@@ -89,7 +87,7 @@ All three fields support these placeholder variables, replaced at runtime:
 
 [llm]
 host = "http://localhost:8280"
-starter = "~/scripts/start_llm.sh"
+starter = "~/.config/shellmando/shellmando_start_llm.sh"
 model = "default"
 
 # -- Generation defaults ----------------------------------------------------
@@ -110,7 +108,7 @@ startup_timeout = 50           # max seconds to wait for LLM startup
 # -- Output -----------------------------------------------------------------
 
 [output]
-dir = "~/scripts/shellmando_out"
+dir = "~/.local/share/shellmando"
 
 # -- Prompt templates -------------------------------------------------------
 
@@ -122,13 +120,7 @@ Use variables only if necessary."""
 
 [prompts.python]
 system = """\
-Reply ONLY with Python code. No explanation, no prose."""
-
-user_prefix = "In Python {python_version}: "
-
-user_suffix = """\
-. Give me only the Python code use comprehension, \
-modern type hints"""
+Reply ONLY with Python (>= {python_version}) code. NO explanation, no prose. Style: use comprehension instead of loops, modern type hints."""
 ```
 
 ## Python 3.11+ note

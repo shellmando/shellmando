@@ -22,36 +22,48 @@ Describe what you need in plain English or any language your local LLM supports 
 
 ## Installation
 
-1. Copy both files into your scripts directory:
+### Quick install
+
+Run the setup script from the repository root:
 
 ```bash
-mkdir -p ~/scripts
-cp shellmando.py ~/scripts/
-cp shellmando.sh ~/scripts/
+./install.sh
+```
+
+This will place files into their XDG-compliant locations and source the shell wrapper in your profile. Run `./install.sh --help` for options.
+
+### Manual install
+
+1. Copy both files into a directory of your choice:
+
+```bash
+mkdir -p ~/.local/lib/shellmando
+cp shellmando.py shellmando.sh shellmando_start_llm.sh ~/.local/lib/shellmando/
 ```
 
 2. Source the shell wrapper in your `.bashrc` or `.zshrc`:
 
 ```bash
-echo 'source ~/scripts/shellmando.sh' >> ~/.bashrc
+echo 'source ~/.local/lib/shellmando/shellmando.sh' >> ~/.bashrc
 ```
 
 3. (Optional) Copy and customize the config file:
 
 ```bash
-mkdir -p ~/.config/shellmando
-cp shellmando.toml ~/.config/shellmando/config.toml
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/shellmando"
+cp shellmando.toml "${XDG_CONFIG_HOME:-$HOME/.config}/shellmando/config.toml"
 ```
 
 See [docs/config.md](docs/config.md) for the full configuration reference.
 
-4. (Optional) Configure environment variables in your shell profile:
+### Directory layout
 
-```bash
-export SHELLMANDO_HOST="http://localhost:8280"   # LLM API base URL
-export SHELLMANDO_LLM_STARTER="$HOME/scripts/start_llm.sh"  # script to auto-start LLM
-export SHELLMANDO_OUTPUT="$HOME/scripts/shellmando_out"  # where scripts are saved
-```
+shellmando follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+
+| Path | Purpose |
+|------|---------|
+| `$XDG_CONFIG_HOME/shellmando/config.toml` | User configuration (default: `~/.config`) |
+| `$XDG_DATA_HOME/shellmando/` | Generated scripts output (default: `~/.local/share`) |
 
 ### Environment variables
 
@@ -60,8 +72,8 @@ export SHELLMANDO_OUTPUT="$HOME/scripts/shellmando_out"  # where scripts are sav
 | `SHELLMANDO_DIR` | Directory containing `shellmando.sh` and `shellmando.py` (auto-detected) |
 | `SHELLMANDO_PY` | Path to `shellmando.py` (defaults to `$SHELLMANDO_DIR/shellmando.py`) |
 | `SHELLMANDO_HOST` | LLM API base URL (default: `http://localhost:8280`) |
-| `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server |
-| `SHELLMANDO_OUTPUT` | Output directory for saved scripts (default: `$SHELLMANDO_DIR/generated`) |
+| `SHELLMANDO_LLM_STARTER` | Path to a script that starts the LLM server (default: `$SHELLMANDO_DIR/shellmando_start_llm.sh`) |
+| `SHELLMANDO_OUTPUT` | Output directory for saved scripts (default: `$XDG_DATA_HOME/shellmando`) |
 | `SHELLMANDO_CONFIG` | Path to a TOML config file (empty = auto-detect) |
 | `SHELLMANDO_OS` | OS context string for the system prompt (auto-detected if unset) |
 | `SHELLMANDO_MODEL` | Model name to use (default: `default`) |
@@ -108,7 +120,7 @@ The generated command (e.g. `find . -size +100M`) lands in your readline prompt 
 ask -m python "read users.csv and print the top 5 rows sorted by age"
 ```
 
-Multi-line results are saved to `~/scripts/shellmando_out/YYYYMMDD/` and the execution command is placed in your prompt.
+Multi-line results are saved to `$XDG_DATA_HOME/shellmando/YYYYMMDD/` (default: `~/.local/share/shellmando/`) and the execution command is placed in your prompt.
 
 ### Use higher temperature for more creative output
 
