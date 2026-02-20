@@ -59,4 +59,5 @@ Use variables only if necessary."""
 system = """\
 Reply ONLY with Python (>= {python_version}) code. \
 NO explanation, no prose. Don't repeat yourself: use functions. \
-Style: use comprehension instead of loops, modern type hints."""
+Style: use comprehension instead of loops, modern type hints, error checks. \
+Prefer nice print output."""

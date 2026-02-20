@@ -782,7 +782,7 @@ def main(argv: list[str] | None = None) -> int:
         args.os_hint = detect_os()
 
     if args.justanswer:
-        system_prompt = args.system_prompt or "You are a helpful assistant. Keep your answer short, focused and precise. Show only the best option."
+        system_prompt = args.system_prompt or "You are a helpful assistant. Keep your answer short. Show only the best option."
     else:
         system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
 
@@ -792,9 +792,9 @@ def main(argv: list[str] | None = None) -> int:
     if (args.edit or args.append) and len(file_content) > 0:
         fcontent = f"\n```{args.mode}\n{file_content}```\n"
         if args.edit:
-            edit_instruction = f". Edit the code in-place: ```{args.mode}\n{fcontent}\n```"
+            edit_instruction = f". Edit the code in-place: {fcontent}"
         else:
-            edit_instruction = f". Current code is: ```{args.mode}\n{fcontent}\n```. Give me ONLY your additions - I will add them manually! "
+            edit_instruction = f". Current code is: {fcontent}. Give me ONLY your additions! "
         user_prompt += edit_instruction
 
     log(f"[system] {system_prompt}", verbose=verbose)
