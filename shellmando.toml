@@ -41,23 +41,3 @@ retry_delay = 1.0              # seconds between retries
 [output]
 dir = "~/.local/share/shellmando"
 
-# -- Prompt templates -------------------------------------------------------
-#
-# Each mode section can define:
-#   system  - the system prompt sent to the LLM
-#
-# All three fields support the template variables listed above.
-# If a section is missing the built-in defaults are used.
-
-[prompts.shell]
-system = """\
-You are a {mode} expert on {os}. \
-Reply ONLY with the needed command(s), NO explanation. \
-Use variables only if necessary."""
-
-[prompts.python]
-system = """\
-Reply ONLY with Python (>= {python_version}) code. \
-NO explanation, no prose. Don't repeat yourself: use functions. \
-Style: use comprehension instead of loops, modern type hints, error checks. \
-Prefer nice print output."""

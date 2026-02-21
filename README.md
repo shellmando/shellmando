@@ -140,7 +140,7 @@ With `--raw`, the unprocessed LLM response is printed to stdout -- useful for pi
 
 ## Configuration
 
-shellmando supports a TOML config file for persistent settings. See [docs/config.md](docs/config.md) for the full reference, including all sections (`[llm]`, `[generation]`, `[network]`, `[output]`, `[prompts.*]`) and template variables.
+shellmando supports a TOML config file for persistent settings. See [docs/config.md](docs/config.md) for the full reference, including all sections (`[llm]`, `[generation]`, `[network]`, `[output]`) and template variables.
 
 ## How it works
 

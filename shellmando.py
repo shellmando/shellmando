@@ -265,42 +265,29 @@ def ensure_llm_running(
     return False, False
 
 
-def _prompt_variables(mode: str, os_hint: str) -> dict[str, str]:
-    """Build the dict of variables available for prompt templates."""
-    return {
-        "mode": mode,
-        "os": os_hint,
-        "python_version": python_version_str(),
-    }
-
-
-def build_system_prompt(mode: str, os_hint: str, snippet: bool, cfg: dict | None = None) -> str:
-    cfg = cfg or {}
-    tvars = _prompt_variables(mode, os_hint)
+def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: bool) -> str:
 
     # Try config-defined template first
     if mode in SHELL_MODES:
-        tpl = _deep_get(cfg, "prompts", "shell", "system", default=None)
-        if tpl:
-            return expand_prompt_template(tpl, tvars)
         os_part = f" on {os_hint}" if os_hint else ""
-        return (
-            f"You are a {mode} expert{os_part}. "
-            "Use variables only if necessary."
-        )
+        instruction = (f"You are a {mode} expert {os_part}."
+                " Reply ONLY with the needed command(s), NO explanation."
+                " Use variables only if necessary.")
+    
 
-    if mode == "python":
-        tpl = _deep_get(cfg, "prompts", "python", "system", default=None)
-        res = ""
-        if tpl:
-            res = expand_prompt_template(tpl, tvars)
-        return (
-            res + "Use a simple snippet with no functions if possible. "
-            if snippet
-            else res
-        )
+    elif mode == "python":
+        add_function = " Create at least one well named function. Include an if __name__ == '__main__'." if not snippet and not file_output else ""
+        add_snippet = " Use a simple snippet with no functions if possible." if snippet else ""
+        no_repeat = "" if snippet else " Don't repeat yourself: use functions."
+        python_instructions = (f"Reply ONLY with Python (>= {python_version_str()}) code." +
+                " NO explanation, no prose." +
+                " Style: use comprehension instead of loops, modern type hints.")
+        instruction = f"{python_instructions}{no_repeat}{add_snippet}{add_function}"
+    
+    else:
+        instruction = "You are a helpful assistant."
 
-    return ""
+    return instruction
 
 
 def query_llm_ollama(
@@ -784,10 +771,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.justanswer:
         system_prompt = args.system_prompt or "You are a helpful assistant. Keep your answer short. Show only the best option."
     else:
-        system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, cfg)
+        system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None)
 
-    if not args.justanswer and args.mode == "python" and file_op is None:
-        system_prompt = f"{system_prompt} Create at least one well named function and call it in the main block"
+    system_prompt += " On conflict: user prompt overrides system prompt."
 
     if (args.edit or args.append) and len(file_content) > 0:
         fcontent = f"\n```{args.mode}\n{file_content}```\n"

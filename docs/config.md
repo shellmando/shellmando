@@ -109,18 +109,6 @@ startup_timeout = 50           # max seconds to wait for LLM startup
 
 [output]
 dir = "~/.local/share/shellmando"
-
-# -- Prompt templates -------------------------------------------------------
-
-[prompts.shell]
-system = """\
-You are a {mode} expert on {os}. \
-Reply ONLY with the needed command(s), no explanation. \
-Use variables only if necessary."""
-
-[prompts.python]
-system = """\
-Reply ONLY with Python (>= {python_version}) code. NO explanation, no prose. Style: use comprehension instead of loops, modern type hints."""
 ```
 
 ## Python 3.11+ note
