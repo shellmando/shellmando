@@ -148,12 +148,14 @@ do_install() {
 
     # 1. Copy scripts
     mkdir -p "$LIB_DIR"
-    cp "$SCRIPT_DIR/shellmando.py"          "$LIB_DIR/shellmando.py"
-    cp "$SCRIPT_DIR/shellmando.sh"          "$LIB_DIR/shellmando.sh"
-    cp "$SCRIPT_DIR/shellmando_start_llm.sh"   "$LIB_DIR/shellmando_start_llm.sh"
-    cp "$SCRIPT_DIR/shellmando_install_llm.sh" "$LIB_DIR/shellmando_install_llm.sh"
+    cp "$SCRIPT_DIR/shellmando.py"               "$LIB_DIR/shellmando.py"
+    cp "$SCRIPT_DIR/shellmando.sh"               "$LIB_DIR/shellmando.sh"
+    cp "$SCRIPT_DIR/shellmando_start_llm.sh"     "$LIB_DIR/shellmando_start_llm.sh"
+    cp "$SCRIPT_DIR/shellmando_install_llm.sh"   "$LIB_DIR/shellmando_install_llm.sh"
+    cp "$SCRIPT_DIR/shellmando_update_llama.sh"  "$LIB_DIR/shellmando_update_llama.sh"
     chmod +x "$LIB_DIR/shellmando_start_llm.sh"
     chmod +x "$LIB_DIR/shellmando_install_llm.sh"
+    chmod +x "$LIB_DIR/shellmando_update_llama.sh"
     info "Copied shellmando files to ${LIB_DIR}"
 
     # 2. Copy example config (if not already present)
@@ -209,6 +211,9 @@ do_install() {
     echo ""
     info "Done! Restart your shell or run:"
     echo "  source $(detect_profile)"
+    echo ""
+    echo "To update llama-server to the latest release in the future:"
+    echo "  ${LIB_DIR}/shellmando_update_llama.sh"
 }
 
 # -- uninstall --------------------------------------------------------------
@@ -221,7 +226,8 @@ do_uninstall() {
             "$LIB_DIR/shellmando.py" \
             "$LIB_DIR/shellmando.sh" \
             "$LIB_DIR/shellmando_start_llm.sh" \
-            "$LIB_DIR/shellmando_install_llm.sh"
+            "$LIB_DIR/shellmando_install_llm.sh" \
+            "$LIB_DIR/shellmando_update_llama.sh"
         rmdir "$LIB_DIR" 2>/dev/null || warn "  ${LIB_DIR} not empty, left in place"
         info "Removed scripts from ${LIB_DIR}"
     fi

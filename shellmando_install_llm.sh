@@ -2,9 +2,10 @@
 # shellmando LLM backend installer
 # ==================================
 # Installs ollama or llama.cpp and downloads a model.
+# Can also be sourced by other scripts to reuse the shared functions.
 #
-# Usage:
-#   ./shellmando_install_llm.sh          # interactive (asks backend + model)
+# Usage (standalone):
+#   ./shellmando_install_llm.sh              # interactive (asks backend + model)
 #   ./shellmando_install_llm.sh --ollama     # install ollama, then pick model
 #   ./shellmando_install_llm.sh --llama-cpp  # install llama.cpp, then pick model
 
@@ -18,16 +19,18 @@ CONFIG_DIR="${XDG_CONFIG_HOME}/shellmando"
 CONFIG_FILE="${CONFIG_DIR}/config.toml"
 
 # -- colours ---------------------------------------------------------------
-if [[ -t 1 ]]; then
+if [[ -t 2 ]]; then
     BOLD='\033[1m'  GREEN='\033[32m'  YELLOW='\033[33m'  RED='\033[31m'  CYAN='\033[36m'  RESET='\033[0m'
 else
     BOLD=''  GREEN=''  YELLOW=''  RED=''  CYAN=''  RESET=''
 fi
 
-info()  { printf "${GREEN}>>>${RESET} %s\n" "$*"; }
-warn()  { printf "${YELLOW}>>>${RESET} %s\n" "$*"; }
-err()   { printf "${RED}>>>${RESET} %s\n" "$*" >&2; }
-step()  { printf "\n${BOLD}${CYAN}=== %s ===${RESET}\n\n" "$*"; }
+# All output helpers write to stderr so they can be used freely inside
+# functions whose stdout is captured with $(...).
+info()  { printf "${GREEN}>>>${RESET} %s\n"            "$*" >&2; }
+warn()  { printf "${YELLOW}>>>${RESET} %s\n"           "$*" >&2; }
+err()   { printf "${RED}>>>${RESET} %s\n"              "$*" >&2; }
+step()  { printf "\n${BOLD}${CYAN}=== %s ===${RESET}\n\n" "$*" >&2; }
 
 # -- OS / arch detection ---------------------------------------------------
 detect_os()   { uname -s; }
@@ -50,8 +53,8 @@ get_total_mem_gb() {
 # CONFIG HELPERS
 # ==========================================================================
 
-# update_config_key <section_key> <value>
-# Uses sed to replace a key inside the [llm] section of the config.
+# update_config_key <key> <value>
+# Replaces a top-level key in the [llm] section of config.toml using sed.
 update_config_key() {
     local key="$1"
     local value="$2"
@@ -61,8 +64,7 @@ update_config_key() {
         return 0
     fi
 
-    # sed -i requires an empty string extension argument on macOS (BSD sed),
-    # while GNU sed accepts -i with no argument; .bak suffix works on both.
+    # .bak suffix makes sed -i portable across GNU sed and macOS BSD sed.
     sed -i.bak "s|^${key} = .*|${key} = \"${value}\"|" "$CONFIG_FILE" \
         && rm -f "${CONFIG_FILE}.bak"
     info "Config updated: ${key} = \"${value}\""
@@ -71,8 +73,7 @@ update_config_key() {
 update_config_after_install() {
     local model="$1"
     local starter_path="${HOME}/.local/lib/shellmando/shellmando_start_llm.sh"
-
-    update_config_key "model" "$model"
+    update_config_key "model"   "$model"
     update_config_key "starter" "$starter_path"
 }
 
@@ -152,80 +153,109 @@ install_ollama_model() {
 }
 
 # ==========================================================================
-# LLAMA.CPP
+# LLAMA.CPP — SHARED BINARY INSTALL / UPDATE
 # ==========================================================================
 
-install_llama_cpp() {
-    if command -v llama-server &>/dev/null; then
-        info "llama-server is already installed."
-        return 0
-    fi
-
+# _llama_server_download_url
+# Prints the URL for the platform-appropriate llama.cpp release zip to stdout.
+# For Linux x86_64: prefers the Vulkan build, falls back to CPU-only.
+# All user-visible messages go to stderr so callers can safely use $(...).
+_llama_server_download_url() {
     local os arch
     os="$(detect_os)"
     arch="$(detect_arch)"
 
-    echo ""
-    info "Installing llama.cpp (llama-server)..."
-
-    # macOS: try Homebrew first
-    if [[ "$os" == "Darwin" ]] && command -v brew &>/dev/null; then
-        info "Installing via Homebrew..."
-        brew install llama.cpp
-        info "llama.cpp installed via Homebrew."
-        return 0
-    fi
-
-    # Check unzip is available (needed for GitHub release archive)
-    if ! command -v unzip &>/dev/null; then
-        err "unzip is required to extract the llama.cpp release archive."
-        echo "Install it with:  sudo apt install unzip   (Debian/Ubuntu)"
-        echo "                  sudo dnf install unzip   (Fedora)"
-        exit 1
-    fi
-
-    # Map platform to the GitHub release filename tag
     local platform_tag
     case "${os}-${arch}" in
-        Linux-x86_64)  platform_tag="ubuntu-x64" ;;
+        Linux-x86_64)  platform_tag="ubuntu-x64"  ;;
         Linux-aarch64) platform_tag="ubuntu-arm64" ;;
-        Darwin-arm64)  platform_tag="macos-arm64" ;;
-        Darwin-x86_64) platform_tag="macos-x64" ;;
+        Darwin-arm64)  platform_tag="macos-arm64"  ;;
+        Darwin-x86_64) platform_tag="macos-x64"    ;;
         *)
             err "Unsupported platform: ${os}-${arch}"
-            echo ""
-            echo "Please build llama.cpp from source:"
-            echo "  https://github.com/ggerganov/llama.cpp#building-the-project"
-            exit 1
+            echo "Please build llama.cpp from source:" >&2
+            echo "  https://github.com/ggerganov/llama.cpp#building-the-project" >&2
+            return 1
             ;;
     esac
 
-    echo "Fetching latest release info from GitHub..."
+    info "Fetching latest llama.cpp release info from GitHub..."
     local api_url="https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
-    local release_json download_url
+    local release_json
     release_json=$(curl -sf "$api_url")
 
-    # Pick the CPU-only zip for this platform (exclude GPU variants)
-    download_url=$(echo "$release_json" \
-        | grep '"browser_download_url"' \
-        | grep "${platform_tag}" \
-        | grep '\.zip"' \
-        | grep -v 'cuda\|hip\|vulkan\|kompute\|sycl\|rpc' \
-        | head -1 \
-        | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
+    local download_url=""
+
+    # For Linux x86_64: prefer Vulkan (works on any Vulkan-capable GPU, including
+    # AMD, Intel, and NVIDIA, with a graceful CPU fallback at runtime).
+    if [[ "${os}-${arch}" == "Linux-x86_64" ]]; then
+        download_url=$(echo "$release_json" \
+            | grep '"browser_download_url"' \
+            | grep "${platform_tag}" \
+            | grep '\.zip"' \
+            | grep 'vulkan' \
+            | grep -v 'cuda\|hip\|kompute\|sycl\|rpc' \
+            | head -1 \
+            | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
+        if [[ -n "$download_url" ]]; then
+            info "Vulkan-enabled build selected (GPU acceleration via Vulkan)."
+        else
+            warn "No Vulkan build found, falling back to CPU-only build."
+        fi
+    fi
+
+    # All other platforms (and Linux x86_64 fallback): CPU-only build.
+    if [[ -z "$download_url" ]]; then
+        download_url=$(echo "$release_json" \
+            | grep '"browser_download_url"' \
+            | grep "${platform_tag}" \
+            | grep '\.zip"' \
+            | grep -v 'cuda\|hip\|vulkan\|kompute\|sycl\|rpc' \
+            | head -1 \
+            | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
+    fi
 
     if [[ -z "$download_url" ]]; then
         err "Could not find a prebuilt binary for ${os}-${arch}."
-        echo ""
-        echo "Please build llama.cpp from source:"
-        echo "  https://github.com/ggerganov/llama.cpp#building-the-project"
-        echo ""
-        echo "Or on macOS install via:  brew install llama.cpp"
+        echo "" >&2
+        echo "Please build llama.cpp from source:" >&2
+        echo "  https://github.com/ggerganov/llama.cpp#building-the-project" >&2
+        echo "Or on macOS install via:  brew install llama.cpp" >&2
+        return 1
+    fi
+
+    echo "$download_url"  # the only stdout output
+}
+
+# install_llama_server_binary [install_dir]
+# Downloads the latest llama.cpp release and installs llama-server to
+# <install_dir> (default: ~/.local/bin).
+# Used by both install_llama_cpp() and update_llama_server().
+install_llama_server_binary() {
+    local install_dir="${1:-${HOME}/.local/bin}"
+    mkdir -p "$install_dir"
+
+    local os
+    os="$(detect_os)"
+
+    # macOS: prefer Homebrew — it handles both fresh install and upgrade.
+    if [[ "$os" == "Darwin" ]] && command -v brew &>/dev/null; then
+        info "Using Homebrew..."
+        brew upgrade llama.cpp 2>/dev/null || brew install llama.cpp
+        info "llama.cpp is up to date via Homebrew."
+        return 0
+    fi
+
+    # Require unzip for the GitHub release archive.
+    if ! command -v unzip &>/dev/null; then
+        err "unzip is required to extract the llama.cpp release archive."
+        echo "Install it with:  sudo apt install unzip   (Debian/Ubuntu)" >&2
+        echo "                  sudo dnf install unzip   (Fedora)" >&2
         exit 1
     fi
 
-    local install_dir="${HOME}/.local/bin"
-    mkdir -p "$install_dir"
+    local download_url
+    download_url=$(_llama_server_download_url)
 
     local zip_file="/tmp/llama-cpp-$$.zip"
     local extract_dir="/tmp/llama-cpp-$$"
@@ -252,9 +282,36 @@ install_llama_cpp() {
 
     if ! command -v llama-server &>/dev/null; then
         warn "${install_dir} is not in your PATH."
-        warn "Add this line to your shell profile to fix it:"
+        warn "Add this to your shell profile:"
         warn "  export PATH=\"\${HOME}/.local/bin:\$PATH\""
     fi
+}
+
+# update_llama_server
+# Updates llama-server in place: installs to the same directory as the
+# currently active binary, or ~/.local/bin if llama-server is not yet found.
+update_llama_server() {
+    local install_dir
+    if command -v llama-server &>/dev/null; then
+        install_dir="$(dirname "$(command -v llama-server)")"
+        info "Updating llama-server in ${install_dir}..."
+    else
+        install_dir="${HOME}/.local/bin"
+        warn "llama-server not found in PATH, will install to ${install_dir}"
+    fi
+    install_llama_server_binary "$install_dir"
+}
+
+# install_llama_cpp
+# Fresh install: skips if llama-server is already present.
+install_llama_cpp() {
+    if command -v llama-server &>/dev/null; then
+        info "llama-server is already installed."
+        return 0
+    fi
+    echo ""
+    info "Installing llama.cpp (llama-server)..."
+    install_llama_server_binary "${HOME}/.local/bin"
 }
 
 download_llama_cpp_model() {
@@ -340,7 +397,6 @@ download_llama_cpp_model() {
 main() {
     local force_backend=""
 
-    # Parse optional flags
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --ollama)    force_backend="ollama";    shift ;;
@@ -399,4 +455,7 @@ main() {
     echo "  ${HOME}/.local/lib/shellmando/shellmando_start_llm.sh"
 }
 
-main "$@"
+# Guard: run main only when executed directly, not when sourced.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
