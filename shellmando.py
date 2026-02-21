@@ -84,6 +84,14 @@ CODE_MODES = {"python"}
 NO_MODES = {"none"}
 ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
 
+CLARIFY_SYSTEM_PROMPT = (
+    "You are a task analyst. Given a user's task, identify critical ambiguities "
+    "especially about the inputs and outputs. If the task is clear, reply ONLY: CLEAR. "
+    "Otherwise reply ONLY with lines in this exact format:\n"
+    "A: <topic> [<option1> | <option2> | ...]\n"
+    "No other text."
+)
+
 _CONFIG_SEARCH_PATHS: list[Path] = [
     Path(DEFAULT_CONFIG_HOME) / "shellmando" / "config.toml",
     Path(__file__).resolve().parent / "shellmando.toml",
@@ -524,6 +532,72 @@ def display_diff(old: Path, new: Path, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Clarify mode helpers
+# ---------------------------------------------------------------------------
+
+
+def parse_clarify_response(response: str) -> list[tuple[str, list[str]]] | None:
+    """Parse the clarification LLM response.
+
+    Returns ``None`` when the task is CLEAR, otherwise a list of
+    ``(topic, [option, ...])`` tuples extracted from lines like:
+    ``A: <topic> [<option1> | <option2> | ...]``
+    """
+    stripped = response.strip()
+    if stripped == "CLEAR":
+        return None
+    ambiguities: list[tuple[str, list[str]]] = []
+    for line in stripped.splitlines():
+        m = re.match(r"A:\s*(.+?)\s*\[(.+?)\]\s*$", line.strip())
+        if m:
+            topic = m.group(1).strip()
+            options = [o.strip() for o in m.group(2).split("|") if o.strip()]
+            if options:
+                ambiguities.append((topic, options))
+    return ambiguities if ambiguities else None
+
+
+def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list[str]:
+    """Interactively ask the user to pick one option per ambiguity.
+
+    Returns one selected option string per entry in *ambiguities*.
+    All output goes to stderr; input is read from stdin.
+    """
+    print("\nThe task has some ambiguities – please clarify:\n", file=sys.stderr)
+    selections: list[str] = []
+    for i, (topic, options) in enumerate(ambiguities, 1):
+        print(f"  {i}. {topic}", file=sys.stderr)
+        for j, opt in enumerate(options, 1):
+            print(f"       {j}) {opt}", file=sys.stderr)
+        while True:
+            try:
+                raw = input(f"     Your choice [1-{len(options)}] (default 1): ").strip()
+            except EOFError:
+                raw = ""
+            if not raw:
+                raw = "1"
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(options):
+                    selections.append(options[idx])
+                    break
+            except ValueError:
+                pass
+            print(f"     Enter a number from 1 to {len(options)}.", file=sys.stderr)
+    return selections
+
+
+def build_clarified_prompt(
+    original: str,
+    ambiguities: list[tuple[str, list[str]]],
+    selections: list[str],
+) -> str:
+    """Append the user's clarification choices to *original*."""
+    parts = [f"{topic}: {sel}" for (topic, _), sel in zip(ambiguities, selections)]
+    return original.rstrip(".") + ". Clarifications: " + "; ".join(parts) + "."
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -633,6 +707,16 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         "--system-prompt",
         default=None,
         help="Override the entire system prompt",
+    )
+    g2.add_argument(
+        "--clarify",
+        action="store_true",
+        default=False,
+        help=(
+            "Before generating, ask the LLM to identify ambiguities in the task "
+            "and let you choose between options. The selected answers are appended "
+            "to the prompt before the real generation call."
+        ),
     )
 
     # Network / resilience
@@ -764,6 +848,9 @@ def main(argv: list[str] | None = None) -> int:
     if not running:
         return 1
 
+    # Select backend once so it can be reused for the clarify pre-call
+    query_llm = query_llm_llama_server if llama_server else query_llm_ollama
+
     # 2. Build prompts --------------------------------------------------
     if args.os_hint == "" and os.environ.get("SHELLMANDO_OS") is None:
         args.os_hint = detect_os()
@@ -774,6 +861,32 @@ def main(argv: list[str] | None = None) -> int:
         system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None)
 
     system_prompt += " On conflict: user prompt overrides system prompt."
+
+    # 2.5 Clarify mode: resolve ambiguities before the main LLM call ----
+    if args.clarify:
+        log("[clarify] Asking LLM to identify ambiguities …", verbose=verbose)
+        clarify_raw = query_llm(
+            host=args.host,
+            model=args.model,
+            system_prompt=CLARIFY_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            timeout=args.timeout,
+            retries=args.retries,
+            retry_delay=args.retry_delay,
+            verbose=verbose,
+        )
+        if clarify_raw is None:
+            log("Error: no clarification response from LLM.", verbose=True)
+            return 1
+        log(f"[clarify] LLM says: {clarify_raw.strip()}", verbose=verbose)
+        ambiguities = parse_clarify_response(clarify_raw)
+        if ambiguities:
+            selections = prompt_user_clarifications(ambiguities)
+            user_prompt = build_clarified_prompt(user_prompt, ambiguities, selections)
+            log(f"[clarify] updated prompt: {user_prompt}", verbose=verbose)
+        else:
+            log("[clarify] Task is clear, proceeding …", verbose=verbose)
 
     if (args.edit or args.append) and len(file_content) > 0:
         fcontent = f"\n```{args.mode}\n{file_content}```\n"
@@ -787,10 +900,6 @@ def main(argv: list[str] | None = None) -> int:
     log(f"[user]   {user_prompt}", verbose=verbose)
 
     # 3. Query LLM ------------------------------------------------------
-    if llama_server:
-        query_llm = query_llm_llama_server
-    else:
-        query_llm = query_llm_ollama
     raw_content = query_llm(
         host=args.host,
         model=args.model,
