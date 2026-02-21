@@ -111,7 +111,7 @@ install_ollama_model() {
     local MODEL
 
     if (( total_mem > 40 )); then
-        echo "Available models for your system:"
+        echo "Example models for your system:"
         printf "  ${BOLD}1)${RESET} Qwen3-Coder-30B-A3B  IQ4_NL   (~19 GB) [default]\n"
         printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-7B     Q4_K_M   (~4.7 GB)\n"
         printf "  ${BOLD}3)${RESET} Qwen2.5-Coder-3B     Q4_K_M   (~2 GB)\n"
@@ -124,7 +124,7 @@ install_ollama_model() {
             *) err "Invalid choice."; exit 1 ;;
         esac
     elif (( total_mem > 20 )); then
-        echo "Available models for your system:"
+        echo "Recommended model for your system (limited RAM):"
         printf "  ${BOLD}1)${RESET} Qwen2.5-Coder-7B  Q4_K_M  (~4.7 GB) [default]\n"
         printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-3B  Q4_K_M  (~2 GB)\n"
         echo ""
@@ -264,22 +264,25 @@ download_llama_cpp_model() {
     echo ""
 
     # Direct GGUF download URLs from HuggingFace
-    local URL_LARGE="https://huggingface.co/lovedheart/Qwen3-Next-REAP-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Next-REAP-30B-A3B-Instruct-Q4_K_XL.gguf"
+    local URL_LARGE="https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF/blob/main/Qwen3-Coder-30B-A3B-Instruct-1M-IQ4_NL.gguf"
+    local URL_REASONING="https://huggingface.co/mradermacher/Qwen3-Coder-Next-REAP-40B-A3B-i1-GGUF/resolve/main/Qwen3-Coder-Next-REAP-40B-A3B.i1-Q4_K_M.gguf"
     local URL_MEDIUM="https://huggingface.co/bartowski/Qwen2.5.1-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5.1-Coder-7B-Instruct-Q4_K_M.gguf"
     local URL_SMALL="https://huggingface.co/mradermacher/Rombos-LLM-V2.5.1-Qwen-3b-i1-GGUF/resolve/main/Rombos-LLM-V2.5.1-Qwen-3b.i1-Q4_K_M.gguf"
     local MODEL_URL
 
     if (( total_mem > 40 )); then
         echo "Available models for your system:"
-        printf "  ${BOLD}1)${RESET} Qwen3-Next-REAP-30B  Q4_K_XL  (~17.3 GB) [default]\n"
-        printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-7B     Q4_K_M   (~4.7 GB)\n"
-        printf "  ${BOLD}3)${RESET} Rombos-LLM-3B        Q4_K_M   (~2.1 GB)\n"
+        printf "  ${BOLD}1)${RESET} Qwen3-Next-REAP-30B        Q4_K_XL  (~17.3 GB) [default]\n"
+        printf "  ${BOLD}1)${RESET} Qwen3-Coder-Next-REAP-40B  Q4_K_M   (~25 GB) [slower but better]\n"
+        printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-7B           Q4_K_M   (~4.7 GB)\n"
+        printf "  ${BOLD}3)${RESET} Rombos-LLM-3B              Q4_K_M   (~2.1 GB)\n"
         echo ""
         read -rp "Select model [1-3] (default: 1): " choice
         case "${choice:-1}" in
             1) MODEL_URL="$URL_LARGE"  ;;
-            2) MODEL_URL="$URL_MEDIUM" ;;
-            3) MODEL_URL="$URL_SMALL"  ;;
+            2) MODEL_URL="$URL_REASONING" ;;
+            3) MODEL_URL="$URL_MEDIUM" ;;
+            4) MODEL_URL="$URL_SMALL"  ;;
             *) err "Invalid choice."; exit 1 ;;
         esac
     elif (( total_mem > 20 )); then
@@ -362,29 +365,29 @@ main() {
         backend_choice="$force_backend"
     else
         echo "Which LLM backend would you like to use?"
-        printf "  ${BOLD}1)${RESET} ollama     - Easy setup, model management built in\n"
-        printf "  ${BOLD}2)${RESET} llama.cpp  - Direct inference via llama-server binary\n"
+        printf "  ${BOLD}1)${RESET} llama.cpp  - Direct inference via llama-server binary\n"
+        printf "  ${BOLD}2)${RESET} ollama     - Easy setup, model management built in\n"
         echo ""
         read -rp "Select backend [1/2] (default: 1): " raw_choice
         case "${raw_choice:-1}" in
-            1|ollama)    backend_choice="ollama" ;;
-            2|llama-cpp) backend_choice="llama-cpp" ;;
+            1|llama-cpp) backend_choice="llama-cpp" ;;
+            2|ollama)    backend_choice="ollama" ;;
             *) err "Invalid choice. Please enter 1 or 2."; exit 1 ;;
         esac
     fi
 
     case "$backend_choice" in
-        ollama)
-            step "Installing ollama"
-            install_ollama
-            step "Selecting and pulling model"
-            install_ollama_model
-            ;;
         llama-cpp)
             step "Installing llama.cpp"
             install_llama_cpp
             step "Downloading model"
             download_llama_cpp_model
+            ;;
+        ollama)
+            step "Installing ollama"
+            install_ollama
+            step "Selecting and pulling model"
+            install_ollama_model
             ;;
     esac
 

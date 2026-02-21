@@ -27,7 +27,7 @@ function start_llama_server() {
     llama-server  -m ${MODEL_FILE} \
         --alias ${ALIAS} \
         --jinja \
-        -ngl 99 --ctx-size 32768 --temp 0.7 --top_p 0.8 --top_k 20 --min-p 0.01 --repeat-penalty 1.05 --fit on \
+        -ngl 99 --ctx-size 16384 --temp 0.7 --top_p 0.8 --top_k 20 --min-p 0.01 --repeat-penalty 1.05 --fit on \
         --sleep-idle-seconds 300 \
         --host 0.0.0.0 --port 8280 \
         > /dev/null 2>&1 &
