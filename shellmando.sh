@@ -40,6 +40,7 @@ function shellmando() {
             -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
             -s|--snippet)     py_args+=("$1"); snippet_mode=true; shift   ;;
             -j|--justanswer)  py_args+=("$1"); justanswer=true; shift ;;
+            -c|--clarify)     py_args+=("$1"); clarify=true; shift ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
