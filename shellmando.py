@@ -84,6 +84,19 @@ CODE_MODES = {"python"}
 NO_MODES = {"none"}
 ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
 
+CLARIFY_SYSTEM_PROMPT_CHECK = (
+    "You are a senior engineer. "
+    "Break down the user's task into sub-tasks and detect missing information for implementation, "
+    " _especially_ input-data, their structures and the presented outputs. "
+    "With sub-tasks as topics and 2-5 possible options used to satisfy the missing information "
+    "reply ONLY with lines in this exact format:\n"
+    "A: <topic> [<option1> || <option2> || ...]\n"
+    "Without missing information reply ONLY: CLEAR. "
+)
+
+
+CLARIFY_SYSTEM_PROMPT = CLARIFY_SYSTEM_PROMPT_CHECK
+
 _CONFIG_SEARCH_PATHS: list[Path] = [
     Path(DEFAULT_CONFIG_HOME) / "shellmando" / "config.toml",
     Path(__file__).resolve().parent / "shellmando.toml",
@@ -276,13 +289,12 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
     
 
     elif mode == "python":
-        add_function = " Create at least one well named function. Include an if __name__ == '__main__'." if not snippet and not file_output else ""
+        add_function = " Create well named functions with at most 7 lines. Include an if __name__ == '__main__'." if not snippet and not file_output else ""
         add_snippet = " Use a simple snippet with no functions if possible." if snippet else ""
-        no_repeat = "" if snippet else " Don't repeat yourself: use functions."
         python_instructions = (f"Reply ONLY with Python (>= {python_version_str()}) code." +
                 " NO explanation, no prose." +
                 " Style: use comprehension instead of loops, modern type hints.")
-        instruction = f"{python_instructions}{no_repeat}{add_snippet}{add_function}"
+        instruction = f"{python_instructions}{add_snippet}{add_function}"
     
     else:
         instruction = "You are a helpful assistant."
@@ -347,6 +359,8 @@ def query_llm_llama_server(
     retries: int,
     retry_delay: float,
     verbose: bool,
+    top_p: float = 0.95,
+    repeat_penalty: float = 1.0
 ) -> str | None:
     """Send a chat-completion request; return the assistant content or None."""
     url = f"{host}/v1/chat/completions"
@@ -358,6 +372,10 @@ def query_llm_llama_server(
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
+            "top_k": 0,              # disabled
+            "min_p": 0.05,           # keeps only tokens ≥5% of top token's probability
+            "top_p": top_p,           # mild nucleus sampling as safety net
+            "repeat_penalty": repeat_penalty,   # OFF for code — variable names NEED repetition
         }
     ).encode()
 
@@ -524,6 +542,135 @@ def display_diff(old: Path, new: Path, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Clarify mode helpers
+# ---------------------------------------------------------------------------
+
+
+def parse_clarify_response(response: str, already_clarified: list[str]) -> list[tuple[str, list[str]]] | None:
+    """Parse the clarification LLM response.
+
+    Returns ``None`` when the task is CLEAR, otherwise a list of
+    ``(topic, [option, ...])`` tuples extracted from lines like:
+    ``A: <topic> [<option1> | <option2> | ...]``
+    """
+    stripped = response.strip()
+    if stripped == "CLEAR":
+        return None, already_clarified
+    ambiguities: list[tuple[str, list[str]]] = []
+    for line in stripped.splitlines():
+        m = re.match(r"[A-Z]*:?\s*(.+?)\s*\[(.+?)\]\s*$", line.strip())
+        if m:
+            topic = m.group(1).strip()
+            if topic.lower() not in already_clarified:
+                options = [o.strip() for o in m.group(2).split("||") if o.strip()]
+                if options:
+                    ambiguities.append((topic, options))
+                    already_clarified.append(re.sub(r'[^a-z\s]', '', topic.lower()))
+    return (ambiguities if ambiguities else None), already_clarified
+
+
+def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list[str]:
+    """Interactively ask the user to pick one option per ambiguity.
+
+    Returns one selected option string per entry in *ambiguities*.
+    All output goes to stderr; input is read from stdin.
+    """
+    selections: list[str] = []
+    for i, (topic, options) in enumerate(ambiguities, 1):
+        print(f"  {i}. {topic}", file=sys.stderr)
+        for j, opt in enumerate(options, 1):
+            print(f"       {j}) {opt}", file=sys.stderr)
+        while True:
+            try:
+                raw = input(f"     Your choice: enter the number [1-{len(options)}], 0 for no choice or enter plain text (default 1): ").strip()
+            except EOFError:
+                raw = ""
+            if not raw:
+                raw = "1"
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(options):
+                    selections.append(options[idx])
+                    break
+                elif idx == -1:
+                    selections.append("")
+                    break
+                else:
+                    print(f"     Enter a number from 1 to {len(options)}.", file=sys.stderr)                    
+            except ValueError:
+                try:
+                    numbers = [int(token.strip()) for token in re.findall(r'(?:^|\s)\d+(?:$|\s)', raw.strip())]
+                    replaced = raw
+                    for idx in numbers:
+                        replaced = replaced.replace(f"{idx}", options[idx-1])
+                    raw = replaced
+                except IndexError:
+                    pass
+
+                # use the response
+                selections.append(raw)
+                break
+            
+    return selections
+
+
+def build_clarified_prompt(
+    original: str,
+    ambiguities: list[tuple[str, list[str]]],
+    selections: list[str],
+    add_constraints_prompt: bool,
+) -> str:
+    """Append the user's clarification choices to *original*."""
+    parts = [f"{topic}: {sel}" for (topic, _), sel in zip(ambiguities, selections) if sel != ""]
+    constraints_prompt = ".\nClarifications: {" if add_constraints_prompt else "; "
+    return original.rstrip(".") + constraints_prompt + "; ".join(parts) + "}"
+
+
+def perform_clarification(
+    args: argparse.Namespace,
+    user_prompt: str,
+    query_llm: callable,
+    verbose: bool,
+    max_repeat: int,
+    add_constraints_prompt: bool = True,
+    already_clarified: list[str] | None = None
+) -> str:
+    if already_clarified is None:
+        already_clarified = ["used language"]
+
+    log(f"[clarify]: {CLARIFY_SYSTEM_PROMPT}", verbose=verbose)
+
+    clarify_raw = query_llm(
+        host=args.host, #"http://localhost:8282", # , #
+        model=args.model,
+        system_prompt=CLARIFY_SYSTEM_PROMPT,
+        user_prompt=f"{user_prompt}, Used Language: {args.mode}.",
+        temperature=0.2, # TODO
+        timeout=args.timeout,
+        retries=args.retries,
+        retry_delay=args.retry_delay,
+        verbose=verbose,
+        top_p=0.95,
+        repeat_penalty=1.0
+    )
+    if clarify_raw is None:
+        log("Error: no clarification response from LLM.", verbose=True)
+        return 1
+    ambiguities, already_clarified = parse_clarify_response(clarify_raw, already_clarified)
+    if ambiguities:
+        log("\n[clarify] the task has some ambiguities:\n", verbose=True)
+        log(re.sub("[A-Z]: ", " * ", clarify_raw.strip()), verbose=True)
+        selections = prompt_user_clarifications(ambiguities)
+        user_prompt = build_clarified_prompt(user_prompt, ambiguities, selections, add_constraints_prompt)
+        log(f"[clarify] updated prompt: {user_prompt}", verbose=verbose)
+        if max_repeat > 1:
+            return perform_clarification(args, user_prompt, query_llm, verbose, max_repeat-1, False, already_clarified)
+    else:
+        log("[clarify] Task is clear, proceeding …", verbose=verbose)
+    return user_prompt
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -633,6 +780,16 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         "--system-prompt",
         default=None,
         help="Override the entire system prompt",
+    )
+    g2.add_argument(
+        "--clarify",
+        action="store_true",
+        default=False,
+        help=(
+            "Before generating, ask the LLM to identify ambiguities in the task "
+            "and let you choose between options. The selected answers are appended "
+            "to the prompt before the real generation call."
+        ),
     )
 
     # Network / resilience
@@ -764,6 +921,9 @@ def main(argv: list[str] | None = None) -> int:
     if not running:
         return 1
 
+    # Select backend once so it can be reused for the clarify pre-call
+    query_llm = query_llm_llama_server if llama_server else query_llm_ollama
+
     # 2. Build prompts --------------------------------------------------
     if args.os_hint == "" and os.environ.get("SHELLMANDO_OS") is None:
         args.os_hint = detect_os()
@@ -783,14 +943,16 @@ def main(argv: list[str] | None = None) -> int:
             edit_instruction = f". Current code is: {fcontent}. Give me ONLY your additions! "
         user_prompt += edit_instruction
 
+    if args.clarify:
+        log("[clarify] Asking LLM to identify ambiguities …", verbose=True)
+
+        user_prompt = perform_clarification(args, user_prompt, query_llm, verbose, max_repeat=1)
+
+
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
 
     # 3. Query LLM ------------------------------------------------------
-    if llama_server:
-        query_llm = query_llm_llama_server
-    else:
-        query_llm = query_llm_ollama
     raw_content = query_llm(
         host=args.host,
         model=args.model,
