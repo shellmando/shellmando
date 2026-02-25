@@ -32,7 +32,7 @@ os = ""                        # leave empty to auto-detect
 
 [network]
 timeout = 180                  # HTTP timeout per request (seconds)
-startup_timeout = 50           # max seconds to wait for LLM startup
+startup_timeout = 120           # max seconds to wait for LLM startup
 retries = 30                   # max retry attempts
 retry_delay = 1.0              # seconds between retries
 

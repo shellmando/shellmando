@@ -106,14 +106,14 @@ install_ollama_model() {
     echo ""
 
     # Ollama model tags
-    local MODEL_LARGE="hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF:IQ4_NL"
+    local MODEL_LARGE="hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF:Q4_K_M"
     local MODEL_MEDIUM="hf.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF:Q4_K_M"
     local MODEL_SMALL="hf.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M"
     local MODEL
 
     if (( total_mem > 40 )); then
         echo "Example models for your system:"
-        printf "  ${BOLD}1)${RESET} Qwen3-Coder-30B-A3B  IQ4_NL   (~19 GB) [default]\n"
+        printf "  ${BOLD}1)${RESET} Qwen3-Coder-30B-A3B  Q4_K_M   (~18 GB) [default]\n"
         printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-7B     Q4_K_M   (~4.7 GB)\n"
         printf "  ${BOLD}3)${RESET} Qwen2.5-Coder-3B     Q4_K_M   (~2 GB)\n"
         echo ""
@@ -321,31 +321,28 @@ download_llama_cpp_model() {
     echo ""
 
     # Direct GGUF download URLs from HuggingFace
-    local URL_LARGE="https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF/blob/main/Qwen3-Coder-30B-A3B-Instruct-1M-IQ4_NL.gguf"
-    local URL_REASONING="https://huggingface.co/mradermacher/Qwen3-Coder-Next-REAP-40B-A3B-i1-GGUF/resolve/main/Qwen3-Coder-Next-REAP-40B-A3B.i1-Q4_K_M.gguf"
+    local URL_LARGE="https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF/blob/main/Qwen3-Coder-30B-A3B-Instruct-1M-Q4_K_M.gguf"
     local URL_MEDIUM="https://huggingface.co/bartowski/Qwen2.5.1-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5.1-Coder-7B-Instruct-Q4_K_M.gguf"
     local URL_SMALL="https://huggingface.co/mradermacher/Rombos-LLM-V2.5.1-Qwen-3b-i1-GGUF/resolve/main/Rombos-LLM-V2.5.1-Qwen-3b.i1-Q4_K_M.gguf"
     local MODEL_URL
 
     if (( total_mem > 40 )); then
         echo "Available models for your system:"
-        printf "  ${BOLD}1)${RESET} Qwen3-Next-REAP-30B        Q4_K_XL  (~17.3 GB) [default]\n"
-        printf "  ${BOLD}1)${RESET} Qwen3-Coder-Next-REAP-40B  Q4_K_M   (~25 GB) [slower but better]\n"
-        printf "  ${BOLD}2)${RESET} Qwen2.5-Coder-7B           Q4_K_M   (~4.7 GB)\n"
-        printf "  ${BOLD}3)${RESET} Rombos-LLM-3B              Q4_K_M   (~2.1 GB)\n"
+        printf "  ${BOLD}1)${RESET} Qwen3-Coder-30B-A3B-Instruct-1M   Q4_K_M   (~18 GB) [default]\n"
+        printf "  ${BOLD}2)${RESET} Qwen2.5.1-Coder-7B-Struct         Q4_K_M   (~4.7 GB)\n"
+        printf "  ${BOLD}3)${RESET} Rombos-LLM-V2.5.1-Qwen-3B-i1      Q4_K_M   (~2.1 GB)\n"
         echo ""
         read -rp "Select model [1-3] (default: 1): " choice
         case "${choice:-1}" in
             1) MODEL_URL="$URL_LARGE"  ;;
-            2) MODEL_URL="$URL_REASONING" ;;
-            3) MODEL_URL="$URL_MEDIUM" ;;
-            4) MODEL_URL="$URL_SMALL"  ;;
+            2) MODEL_URL="$URL_MEDIUM" ;;
+            3) MODEL_URL="$URL_SMALL"  ;;
             *) err "Invalid choice."; exit 1 ;;
         esac
     elif (( total_mem > 20 )); then
         echo "Available models for your system:"
-        printf "  ${BOLD}1)${RESET} Qwen2.5-Coder-7B  Q4_K_M  (~4.7 GB) [default]\n"
-        printf "  ${BOLD}2)${RESET} Rombos-LLM-3B     Q4_K_M  (~2.1 GB)\n"
+        printf "  ${BOLD}2)${RESET} Qwen2.5.1-Coder-7B-Struct      Q4_K_M   (~4.7 GB) [default]\n"
+        printf "  ${BOLD}3)${RESET} Rombos-LLM-V2.5.1-Qwen-3B-i1   Q4_K_M   (~2.1 GB)\n"
         echo ""
         read -rp "Select model [1-2] (default: 1): " choice
         case "${choice:-1}" in
@@ -355,7 +352,7 @@ download_llama_cpp_model() {
         esac
     else
         echo "Recommended model for your system (limited RAM):"
-        printf "  ${BOLD}Rombos-LLM-3B  Q4_K_M  (~2.1 GB)${RESET}\n"
+        printf "  ${BOLD}3)${RESET} Rombos-LLM-V2.5.1-Qwen-3B-i1   Q4_K_M   (~2.1 GB)\n"
         echo ""
         read -rp "Download this model? [Y/n]: " confirm
         if [[ "${confirm:-y}" =~ ^[Nn]$ ]]; then

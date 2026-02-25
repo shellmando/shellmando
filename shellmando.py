@@ -67,7 +67,7 @@ DEFAULT_HOST = "http://localhost:8280"
 DEFAULT_MODEL = "default"
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_TIMEOUT = 180
-DEFAULT_STARTUP_TIMEOUT = 50
+DEFAULT_STARTUP_TIMEOUT = 120
 DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
 DEFAULT_CONFIG_HOME = os.environ.get(
@@ -269,7 +269,8 @@ def ensure_llm_running(
 
     deadline = time.monotonic() + startup_timeout
     while time.monotonic() < deadline:
-        if health_check(host, timeout=1.0):
+        running, llama_server = health_check(host, timeout=1.0)
+        if running:
             log("LLM is ready.", verbose=verbose)
             return True, llama_server
         time.sleep(0.5)
@@ -339,8 +340,6 @@ def query_llm_ollama(
                 log(f"[llm-ollama] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
             return content
         except urllib.error.URLError as exc:
-            import traceback
-            log(traceback.format_exc())
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
