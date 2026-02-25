@@ -170,6 +170,36 @@ def log(msg: str, *, verbose: bool = True) -> None:
         print(msg, file=sys.stderr)
 
 
+def _count_up_moves(text: str) -> int:
+    """Count cursor-up moves needed to return to before *text* was printed on stderr."""
+    if not text:
+        return 0
+    term_width = shutil.get_terminal_size().columns
+    up_moves = 0
+    current_col = 0
+    for char in text:
+        if char == "\n":
+            up_moves += 1
+            current_col = 0
+        else:
+            current_col += 1
+            if current_col > term_width:
+                up_moves += 1
+                current_col = 1
+    return up_moves
+
+
+def _clear_streaming_output(text: str) -> None:
+    """Erase *text* that was streamed live to stderr, returning cursor to start."""
+    if not sys.stderr.isatty() or not text:
+        return
+    up = _count_up_moves(text)
+    if up:
+        sys.stderr.write(f"\033[{up}A")
+    sys.stderr.write("\r\033[J")
+    sys.stderr.flush()
+
+
 def detect_os() -> str:
     """Return a short OS description for the system prompt."""
     parts: list[str] = [platform.system()]
@@ -314,7 +344,7 @@ def query_llm_ollama(
     retry_delay: float,
     verbose: bool,
 ) -> str | None:
-    """Send a chat request to Ollama; return the assistant content or None."""
+    """Send a streaming chat request to Ollama; return the assistant content or None."""
     url = f"{host}/api/chat"
     payload = json.dumps(
         {
@@ -324,22 +354,40 @@ def query_llm_ollama(
                 {"role": "user", "content": user_prompt},
             ],
             "options": {"temperature": temperature},
-            "stream": False,
+            "stream": True,
         }
     ).encode()
 
     headers = {"Content-Type": "application/json"}
+    is_tty = sys.stderr.isatty()
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        accumulated = ""
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
-            content: str | None = data.get("message", {}).get("content")
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (chunk.get("message") or {}).get("content") or ""
+                    if delta:
+                        if is_tty:
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
+                        accumulated += delta
+                    if chunk.get("done"):
+                        break
+            _clear_streaming_output(accumulated)
             if verbose:
-                log(f"[llm-ollama] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
-            return content
+                log(f"[llm-ollama] full response:\n{accumulated}", verbose=True)
+            return accumulated or None
         except urllib.error.URLError as exc:
+            _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
@@ -361,7 +409,7 @@ def query_llm_llama_server(
     top_p: float = 0.95,
     repeat_penalty: float = 1.0
 ) -> str | None:
-    """Send a chat-completion request; return the assistant content or None."""
+    """Send a streaming chat-completion request; return the assistant content or None."""
     url = f"{host}/v1/chat/completions"
     payload = json.dumps(
         {
@@ -375,21 +423,41 @@ def query_llm_llama_server(
             "min_p": 0.05,           # keeps only tokens ≥5% of top token's probability
             "top_p": top_p,           # mild nucleus sampling as safety net
             "repeat_penalty": repeat_penalty,   # OFF for code — variable names NEED repetition
+            "stream": True,
         }
     ).encode()
 
     headers = {"Content-Type": "application/json"}
+    is_tty = sys.stderr.isatty()
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        accumulated = ""
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
-            content: str | None = data.get("choices", [{}])[0].get("message", {}).get("content")
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
+                    if delta:
+                        if is_tty:
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
+                        accumulated += delta
+            _clear_streaming_output(accumulated)
             if verbose:
-                log(f"[llm] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
-            return content
+                log(f"[llm] full response:\n{accumulated}", verbose=True)
+            return accumulated or None
         except urllib.error.URLError as exc:
+            _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
