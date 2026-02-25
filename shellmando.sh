@@ -14,7 +14,9 @@ export XDG_DATA_HOME
 # Override these via environment if you like:
 : "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
 export SHELLMANDO_DIR
-: "${SHELLMANDO_MODELS_DIR}:=${SHELLMANDO_DIR}/models"
+: "${SHELLMANDO_OUTPUT:=${XDG_DATA_HOME}/shellmando}"
+export SHELLMANDO_OUTPUT
+: "${SHELLMANDO_MODELS_DIR}:=${SHELLMANDO_OUTPUT}/models"
 export SHELLMANDO_MODELS_DIR
 : "${SHELLMANDO_MODEL}:=$(ls ${SHELLMANDO_MODELS_DIR} | head -n 1)"
 export SHELLMANDO_MODEL
@@ -22,8 +24,7 @@ export SHELLMANDO_MODEL
 export SHELLMANDO_HOST
 : "${SHELLMANDO_LLM_STARTER:=${SHELLMANDO_DIR}/shellmando_start_llm.sh}"
 export SHELLMANDO_LLM_STARTER
-: "${SHELLMANDO_OUTPUT:=${XDG_DATA_HOME}/shellmando}"
-export SHELLMANDO_OUTPUT
+
 : "${SHELLMANDO_CONFIG:=}"   # path to TOML config (empty = auto-detect)
 : "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
 

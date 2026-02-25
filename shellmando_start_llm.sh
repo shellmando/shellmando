@@ -2,7 +2,8 @@
 set -euo pipefail
 : "${SHELLMANDO_HOST:=http://localhost:8280}"
 : "${SHELLMANDO_DIR:=$(dirname "$(realpath "${BASH_SOURCE[0]}")")}"
-: "${SHELLMANDO_MODELS_DIR:=${SHELLMANDO_DIR}/models}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+: "${SHELLMANDO_MODELS_DIR:=${XDG_DATA_HOME}/shellmando/models}"
 : "${SHELLMANDO_MODEL:=$(ls ${SHELLMANDO_MODELS_DIR} | head -n 1)}"
 
 function check_running() {
@@ -27,7 +28,7 @@ function start_llama_server() {
     llama-server  -m ${MODEL_FILE} \
         --alias ${ALIAS} \
         --jinja \
-        -ngl 99 --ctx-size 16384 --temp 0.7 --top_p 0.8 --top_k 20 --min-p 0.01 --repeat-penalty 1.05 --fit on \
+        -ngl 99 --ctx-size 16384 --temp 0.2 --top_p 0.8 --top_k 0 --min-p 0.05 --repeat-penalty 1.0 --fit on \
         --sleep-idle-seconds 300 \
         --host 0.0.0.0 --port 8280 \
         > /dev/null 2>&1 &
