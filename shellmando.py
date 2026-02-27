@@ -336,6 +336,15 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
 
     return instruction
 
+def _print_banner(user_prompt: str):
+    line = shutil.get_terminal_size().columns * "_" + "\n"
+    sys.stderr.write(line)
+    sys.stderr.write("\n s h e l l m a n d o\n")
+    sys.stderr.write(line)
+    sys.stderr.write(f"> {user_prompt}\n")
+    sys.stderr.write(line)
+    sys.stderr.flush()
+
 
 def query_llm_ollama(
     host: str,
@@ -371,6 +380,8 @@ def query_llm_ollama(
         accumulated = ""
         try:
             with _alternate_screen():
+                if isatty:
+                    _print_banner(user_prompt)
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     for raw_line in resp:
                         line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -429,12 +440,15 @@ def query_llm_llama_server(
     ).encode()
 
     headers = {"Content-Type": "application/json"}
+    isatty = sys.stderr.isatty()
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         accumulated = ""
         try:
             with _alternate_screen():
+                if isatty:
+                    _print_banner(user_prompt)
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     for raw_line in resp:
                         line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -448,7 +462,7 @@ def query_llm_llama_server(
                         except json.JSONDecodeError:
                             continue
                         delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
-                        if delta:
+                        if delta and isatty:
                             sys.stderr.write(delta)
                             sys.stderr.flush()
                         accumulated += delta
