@@ -336,17 +336,22 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
 
     return instruction
 
-def _print_banner(user_prompt: str):
-    line = shutil.get_terminal_size().columns * "_" + "\n"
-    sys.stderr.write(line)
-    sys.stderr.write("\n s h e l l m a n d o\n")
-    sys.stderr.write(line)
-    sys.stderr.write(f"> {user_prompt}\n")
-    sys.stderr.write(line)
+def _print_banner(user_prompt: str) -> None:
+    isatty = sys.stderr.isatty()
+    cols = shutil.get_terminal_size().columns
+    CYAN   = "\033[36m" if isatty else ""
+    BOLD   = "\033[1m"  if isatty else ""
+    YELLOW = "\033[33m" if isatty else ""
+    RESET  = "\033[0m"  if isatty else ""
+    rule = CYAN + "─" * cols + RESET
+    sys.stderr.write(f"\n{rule}\n")
+    sys.stderr.write(f"  {BOLD}{CYAN}✦ shellmando{RESET}\n")
+    sys.stderr.write(f"  {YELLOW}▶{RESET} {user_prompt}\n")
+    sys.stderr.write(f"{rule}\n\n")
     sys.stderr.flush()
 
 
-def query_llm_ollama(
+def query_llm(
     host: str,
     model: str,
     system_prompt: str,
@@ -356,88 +361,41 @@ def query_llm_ollama(
     retries: int,
     retry_delay: float,
     verbose: bool,
-) -> str | None:
-    """Send a streaming chat request to Ollama; return the assistant content or None."""
-    url = f"{host}/api/chat"
-    payload = json.dumps(
-        {
-            "model": "hf.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "options": {"temperature": temperature},
-            "stream": True,
-        }
-    ).encode()
-
-    headers = {"Content-Type": "application/json"}
-
-    isatty = sys.stderr.isatty()
-
-    for attempt in range(1, retries + 1):
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        accumulated = ""
-        try:
-            with _alternate_screen():
-                if isatty:
-                    _print_banner(user_prompt)
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    for raw_line in resp:
-                        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-                        if not line:
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = (chunk.get("message") or {}).get("content") or ""
-                        if isatty and delta:
-                            sys.stderr.write(delta)
-                            sys.stderr.flush()
-                        accumulated += delta
-                        if chunk.get("done"):
-                            break
-            return accumulated
-        except urllib.error.URLError as exc:
-            log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
-            if attempt < retries:
-                time.sleep(retry_delay)
-
-    log("Error: all retries exhausted.", verbose=True)
-    return None
-
-
-def query_llm_llama_server(
-    host: str,
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float,
-    timeout: float,
-    retries: int,
-    retry_delay: float,
-    verbose: bool,
+    llama_server: bool = True,
     top_p: float = 0.95,
     repeat_penalty: float = 1.0,
 ) -> str | None:
-    """Send a streaming chat-completion request; return the assistant content or None."""
-    url = f"{host}/v1/chat/completions"
-    payload = json.dumps(
-        {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": temperature,
-            "top_k": 0,  # disabled
-            "min_p": 0.05,  # keeps only tokens ≥5% of top token's probability
-            "top_p": top_p,  # mild nucleus sampling as safety net
-            "repeat_penalty": repeat_penalty,  # OFF for code — variable names NEED repetition
-            "stream": True,
-        }
-    ).encode()
+    """Send a streaming chat request to llama.cpp or Ollama; return the assistant content or None."""
+    if llama_server:
+        url = f"{host}/v1/chat/completions"
+        payload = json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": temperature,
+                "top_k": 0,  # disabled
+                "min_p": 0.05,  # keeps only tokens ≥5% of top token's probability
+                "top_p": top_p,  # mild nucleus sampling as safety net
+                "repeat_penalty": repeat_penalty,  # OFF for code — variable names NEED repetition
+                "stream": True,
+            }
+        ).encode()
+    else:
+        url = f"{host}/api/chat"
+        payload = json.dumps(
+            {
+                "model": "hf.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "options": {"temperature": temperature},
+                "stream": True,
+            }
+        ).encode()
 
     headers = {"Content-Type": "application/json"}
     isatty = sys.stderr.isatty()
@@ -452,25 +410,38 @@ def query_llm_llama_server(
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     for raw_line in resp:
                         line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
+                        if llama_server:
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
+                        else:
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            delta = (chunk.get("message") or {}).get("content") or ""
                         if delta and isatty:
                             sys.stderr.write(delta)
                             sys.stderr.flush()
                         accumulated += delta
+                        if not llama_server and chunk.get("done"):
+                            break
             return accumulated
         except urllib.error.URLError as exc:
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
+        except KeyboardInterrupt:
+            return accumulated + "\n<interrupted>\n"
 
     log("Error: all retries exhausted.", verbose=True)
     return None
@@ -490,21 +461,43 @@ def print_code_blocks_colored(text: str):
     inblock = False
     lang = ""
     collected = ""
+    max_len = 0
     if bat and "```" in text:
         for line in text.splitlines():
             stripped = line.strip()
             if inblock and lang != "":
                 if stripped.startswith("```"):
+                    sys.stdout.write(f"\033[38;5;244m")
+                    horizontal_line = " " + min(max_len + 2,shutil.get_terminal_size().columns - 1) * "─"
+                    print(horizontal_line)
+                    sys.stdout.write(f"\033[0m")
                     subprocess.run([bat, "--paging=never", "--style=plain", f"-l={lang}"], input=collected, text=True, check=False)
+                    sys.stdout.write(f"\033[38;5;244m")
+                    print(horizontal_line)
+                    sys.stdout.write(f"\033[0m")
                     inblock = False
                     collected = ""
+                    max_len = 0
                 else:
-                    collected += line + "\n"
+                    collected += "  " + line + "\n"
+                    max_len = max(len(line), max_len)
             elif stripped.startswith("```"):
                 lang = stripped[3:]
                 inblock = True
+            elif "`" in line:
+                arr = line.split("`")
+                print_orange = False
+                for elem in arr:
+                    if print_orange:
+                        sys.stdout.write(f"\033[38;5;172m{elem}\033[0m")
+                    else:
+                        sys.stdout.write(elem)
+                    print_orange = (print_orange == False)
+                print("")
             else:
                 print(line)
+    else:
+        print(text)
             
 
 def is_oneliner(text: str) -> bool:
@@ -1004,8 +997,8 @@ def main(argv: list[str] | None = None) -> int:
     if not running:
         return 1
 
-    # Select backend once so it can be reused for the clarify pre-call
-    query_llm = query_llm_llama_server if llama_server else query_llm_ollama
+    # Bind the detected backend so it can be reused for the clarify pre-call
+    _query = lambda **kw: query_llm(llama_server=llama_server, **kw)
 
     # 2. Build prompts --------------------------------------------------
     if args.os_hint == "" and os.environ.get("SHELLMANDO_OS") is None:
@@ -1033,13 +1026,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.clarify:
         log("[clarify] Asking LLM to identify ambiguities …", verbose=True)
 
-        user_prompt = perform_clarification(args, user_prompt, query_llm, verbose, max_repeat=1)
+        user_prompt = perform_clarification(args, user_prompt, _query, verbose, max_repeat=1)
 
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
 
     # 3. Query LLM ------------------------------------------------------
-    raw_content = query_llm(
+    raw_content = _query(
         host=args.host,
         model=args.model,
         system_prompt=system_prompt,
@@ -1060,7 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.justanswer:
-        #print_code_blocks_colored(raw_content)
+        print_code_blocks_colored(raw_content)
         return 0
 
     # 4. Process response -----------------------------------------------
