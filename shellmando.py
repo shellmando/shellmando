@@ -440,6 +440,8 @@ def query_llm(
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
+        except KeyboardInterrupt:
+            return accumulated + "\n<interrupted>\n"
 
     log("Error: all retries exhausted.", verbose=True)
     return None
@@ -459,21 +461,43 @@ def print_code_blocks_colored(text: str):
     inblock = False
     lang = ""
     collected = ""
+    max_len = 0
     if bat and "```" in text:
         for line in text.splitlines():
             stripped = line.strip()
             if inblock and lang != "":
                 if stripped.startswith("```"):
+                    sys.stdout.write(f"\033[38;5;244m")
+                    horizontal_line = " " + min(max_len + 2,shutil.get_terminal_size().columns - 1) * "─"
+                    print(horizontal_line)
+                    sys.stdout.write(f"\033[0m")
                     subprocess.run([bat, "--paging=never", "--style=plain", f"-l={lang}"], input=collected, text=True, check=False)
+                    sys.stdout.write(f"\033[38;5;244m")
+                    print(horizontal_line)
+                    sys.stdout.write(f"\033[0m")
                     inblock = False
                     collected = ""
+                    max_len = 0
                 else:
-                    collected += line + "\n"
+                    collected += "  " + line + "\n"
+                    max_len = max(len(line), max_len)
             elif stripped.startswith("```"):
                 lang = stripped[3:]
                 inblock = True
+            elif "`" in line:
+                arr = line.split("`")
+                print_orange = False
+                for elem in arr:
+                    if print_orange:
+                        sys.stdout.write(f"\033[38;5;172m{elem}\033[0m")
+                    else:
+                        sys.stdout.write(elem)
+                    print_orange = (print_orange == False)
+                print("")
             else:
                 print(line)
+    else:
+        print(text)
             
 
 def is_oneliner(text: str) -> bool:
@@ -1029,7 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.justanswer:
-        #print_code_blocks_colored(raw_content)
+        print_code_blocks_colored(raw_content)
         return 0
 
     # 4. Process response -----------------------------------------------
