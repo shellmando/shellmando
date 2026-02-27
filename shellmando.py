@@ -37,6 +37,7 @@ import argparse
 import platform
 import ast
 import contextlib
+import curses
 import json
 import os
 import re
@@ -167,25 +168,35 @@ def log(msg: str, *, verbose: bool = True) -> None:
         print(msg, file=sys.stderr)
 
 
-def _erase_streamed_output(text: str) -> None:
-    """Erase lines written to stderr during streaming so final output can replace them."""
-    if not sys.stderr.isatty() or not text:
-        return
-    sz = shutil.get_terminal_size()
-    cols, rows = sz.columns, sz.lines
-    visual_lines = sum((len(seg) + cols) // cols if seg else 1 for seg in text.split("\n"))
-    pages = (visual_lines + rows - 1) // rows
+@contextlib.contextmanager
+def _alternate_screen():
+    """Stream LLM output in the terminal's alternate screen buffer.
 
-    # hmmm - this isn't really working
-    # all characters that are printed and scroll outside of the screen are not erased!
-    # better to use curses and alternate screenbuffer mode instead!
-    for _ in range(pages):
-        n = min(visual_lines-1, rows-1)
-        sys.stderr.write(f"\033[{n}A\033[1G\033[J" if n > 0 else "\033[1G\033[J")
+    On entry the terminal switches to the alternate screen (smcup); on exit it
+    returns to the main screen (rmcup), which discards everything written
+    during streaming — including content that scrolled off the top — without
+    any line-counting heuristics.  Falls back to a no-op when stderr is not a
+    tty or the terminal lacks alternate-screen support.
+    """
+    if not sys.stderr.isatty():
+        yield
+        return
+    smcup = rmcup = None
+    try:
+        curses.setupterm()
+        smcup = curses.tigetstr("smcup")
+        rmcup = curses.tigetstr("rmcup")
+    except Exception:
+        pass
+    if smcup:
+        sys.stderr.buffer.write(smcup)
         sys.stderr.flush()
-        sys.stderr.write("\033[5~")
-        sys.stderr.flush()
-        visual_lines -= rows
+    try:
+        yield
+    finally:
+        if rmcup:
+            sys.stderr.buffer.write(rmcup)
+            sys.stderr.flush()
 
 
 def detect_os() -> str:
@@ -359,23 +370,23 @@ def query_llm_ollama(
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         accumulated = ""
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = (chunk.get("message") or {}).get("content") or ""
-                    if isatty and delta:
-                        sys.stderr.write(delta)
-                        sys.stderr.flush()
-                    accumulated += delta
-                    if chunk.get("done"):
-                        break
-            _erase_streamed_output(accumulated)
+            with _alternate_screen():
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    for raw_line in resp:
+                        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = (chunk.get("message") or {}).get("content") or ""
+                        if isatty and delta:
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
+                        accumulated += delta
+                        if chunk.get("done"):
+                            break
             return accumulated
         except urllib.error.URLError as exc:
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
@@ -423,24 +434,24 @@ def query_llm_llama_server(
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         accumulated = ""
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
-                    if delta:
-                        sys.stderr.write(delta)
-                        sys.stderr.flush()
-                    accumulated += delta
-            _erase_streamed_output(accumulated)
+            with _alternate_screen():
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    for raw_line in resp:
+                        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
+                        if delta:
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
+                        accumulated += delta
             return accumulated
         except urllib.error.URLError as exc:
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
