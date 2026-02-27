@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import platform
 import ast
+import contextlib
 import json
 import os
 import re
@@ -70,12 +71,8 @@ DEFAULT_TIMEOUT = 180
 DEFAULT_STARTUP_TIMEOUT = 120
 DEFAULT_RETRIES = 30
 DEFAULT_RETRY_DELAY = 1.0
-DEFAULT_CONFIG_HOME = os.environ.get(
-    "XDG_CONFIG_HOME", os.path.expanduser("~/.config")
-)
-DEFAULT_DATA_HOME = os.environ.get(
-    "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
-)
+DEFAULT_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+DEFAULT_DATA_HOME = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
 DEFAULT_OUTPUT_DIR = os.path.join(DEFAULT_DATA_HOME, "shellmando")
 SHELLMANDO_DIR = os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 
@@ -170,6 +167,27 @@ def log(msg: str, *, verbose: bool = True) -> None:
         print(msg, file=sys.stderr)
 
 
+def _erase_streamed_output(text: str) -> None:
+    """Erase lines written to stderr during streaming so final output can replace them."""
+    if not sys.stderr.isatty() or not text:
+        return
+    sz = shutil.get_terminal_size()
+    cols, rows = sz.columns, sz.lines
+    visual_lines = sum((len(seg) + cols) // cols if seg else 1 for seg in text.split("\n"))
+    pages = (visual_lines + rows - 1) // rows
+
+    # hmmm - this isn't really working
+    # all characters that are printed and scroll outside of the screen are not erased!
+    # better to use curses and alternate screenbuffer mode instead!
+    for _ in range(pages):
+        n = min(visual_lines-1, rows-1)
+        sys.stderr.write(f"\033[{n}A\033[1G\033[J" if n > 0 else "\033[1G\033[J")
+        sys.stderr.flush()
+        sys.stderr.write("\033[5~")
+        sys.stderr.flush()
+        visual_lines -= rows
+
+
 def detect_os() -> str:
     """Return a short OS description for the system prompt."""
     parts: list[str] = [platform.system()]
@@ -236,12 +254,12 @@ def health_check(host: str, timeout: float = 0.5) -> tuple[bool, bool]:
     try:
         req = urllib.request.Request(f"{host}/health", method="GET")
         with urllib.request.urlopen(req, timeout=timeout):
-            return True, True # running, llama_server
+            return True, True  # running, llama_server
     except Exception:
         req = urllib.request.Request(f"{host}", method="GET")
         try:
             with urllib.request.urlopen(req, timeout=timeout):
-                return True, False # running, ollama
+                return True, False  # running, ollama
         except Exception:
             return False, False
 
@@ -262,9 +280,7 @@ def ensure_llm_running(
         return False, False
 
     log("Starting local LLM …", verbose=True)
-    subprocess.Popen(
-        [starter]
-    )
+    subprocess.Popen([starter])
     time.sleep(5)
 
     deadline = time.monotonic() + startup_timeout
@@ -284,19 +300,26 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
     # Try config-defined template first
     if mode in SHELL_MODES:
         os_part = f" on {os_hint}" if os_hint else ""
-        instruction = (f"You are a {mode} expert {os_part}."
-                " Reply ONLY with the needed command(s), NO explanation."
-                " Use variables only if necessary.")
-    
+        instruction = (
+            f"You are a {mode} expert {os_part}."
+            " Reply ONLY with the needed command(s), NO explanation."
+            " Use variables only if necessary."
+        )
 
     elif mode == "python":
-        add_function = " Create well named functions with at most 7 lines. Include an if __name__ == '__main__'." if not snippet and not file_output else ""
+        add_function = (
+            " Create well named functions with at most 7 lines. Include an if __name__ == '__main__'."
+            if not snippet and not file_output
+            else ""
+        )
         add_snippet = " Use a simple snippet with no functions if possible." if snippet else ""
-        python_instructions = (f"Reply ONLY with Python (>= {python_version_str()}) code." +
-                " NO explanation, no prose." +
-                " Style: use comprehension instead of loops, modern type hints.")
+        python_instructions = (
+            f"Reply ONLY with Python (>= {python_version_str()}) code."
+            + " NO explanation, no prose."
+            + " Style: use comprehension instead of loops, modern type hints."
+        )
         instruction = f"{python_instructions}{add_snippet}{add_function}"
-    
+
     else:
         instruction = "You are a helpful assistant."
 
@@ -314,7 +337,7 @@ def query_llm_ollama(
     retry_delay: float,
     verbose: bool,
 ) -> str | None:
-    """Send a chat request to Ollama; return the assistant content or None."""
+    """Send a streaming chat request to Ollama; return the assistant content or None."""
     url = f"{host}/api/chat"
     payload = json.dumps(
         {
@@ -324,21 +347,36 @@ def query_llm_ollama(
                 {"role": "user", "content": user_prompt},
             ],
             "options": {"temperature": temperature},
-            "stream": False,
+            "stream": True,
         }
     ).encode()
 
     headers = {"Content-Type": "application/json"}
 
+    isatty = sys.stderr.isatty()
+
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        accumulated = ""
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
-            content: str | None = data.get("message", {}).get("content")
-            if verbose:
-                log(f"[llm-ollama] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
-            return content
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (chunk.get("message") or {}).get("content") or ""
+                    if isatty and delta:
+                        sys.stderr.write(delta)
+                        sys.stderr.flush()
+                    accumulated += delta
+                    if chunk.get("done"):
+                        break
+            _erase_streamed_output(accumulated)
+            return accumulated
         except urllib.error.URLError as exc:
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
@@ -359,9 +397,9 @@ def query_llm_llama_server(
     retry_delay: float,
     verbose: bool,
     top_p: float = 0.95,
-    repeat_penalty: float = 1.0
+    repeat_penalty: float = 1.0,
 ) -> str | None:
-    """Send a chat-completion request; return the assistant content or None."""
+    """Send a streaming chat-completion request; return the assistant content or None."""
     url = f"{host}/v1/chat/completions"
     payload = json.dumps(
         {
@@ -371,10 +409,11 @@ def query_llm_llama_server(
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
-            "top_k": 0,              # disabled
-            "min_p": 0.05,           # keeps only tokens ≥5% of top token's probability
-            "top_p": top_p,           # mild nucleus sampling as safety net
-            "repeat_penalty": repeat_penalty,   # OFF for code — variable names NEED repetition
+            "top_k": 0,  # disabled
+            "min_p": 0.05,  # keeps only tokens ≥5% of top token's probability
+            "top_p": top_p,  # mild nucleus sampling as safety net
+            "repeat_penalty": repeat_penalty,  # OFF for code — variable names NEED repetition
+            "stream": True,
         }
     ).encode()
 
@@ -382,13 +421,27 @@ def query_llm_llama_server(
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        accumulated = ""
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
-            content: str | None = data.get("choices", [{}])[0].get("message", {}).get("content")
-            if verbose:
-                log(f"[llm] raw response:\n{json.dumps(data, indent=2)}", verbose=True)
-            return content
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
+                    if delta:
+                        sys.stderr.write(delta)
+                        sys.stderr.flush()
+                    accumulated += delta
+            _erase_streamed_output(accumulated)
+            return accumulated
         except urllib.error.URLError as exc:
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
@@ -397,34 +450,37 @@ def query_llm_llama_server(
     log("Error: all retries exhausted.", verbose=True)
     return None
 
+
 # ---------------------------------------------------------------------------
 # Response processing
 # ---------------------------------------------------------------------------
 
-_FENCE_RE = re.compile(
-    r"```(?P<lang>\w+)?\s*\n(?P<code>.*?)```",
-    re.DOTALL,
-)
-
-
-def extract_fenced_blocks(text: str) -> list[tuple[str, str]]:
-    """Return list of (language_tag, code) from fenced code blocks."""
-    return [(m.group("lang") or "", m.group("code")) for m in _FENCE_RE.finditer(text)]
-
-
 def strip_fences(text: str) -> str:
     """Remove markdown fences and trim whitespace, just like the old sed chain."""
-    lines: list[str] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            continue
-        lines.append(line)
+    return "\n".join([line for line in text.splitlines() 
+                      if not line.strip().startswith("```")])
 
-    # strip leading/trailing blank lines, trim each line
-    result = "\n".join(l.rstrip() for l in lines).strip()
-    return result
-
+def print_code_blocks_colored(text: str):
+    bat = shutil.which("bat") or shutil.which("batcat")
+    inblock = False
+    lang = ""
+    collected = ""
+    if bat and "```" in text:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if inblock and lang != "":
+                if stripped.startswith("```"):
+                    subprocess.run([bat, "--paging=never", "--style=plain", f"-l={lang}"], input=collected, text=True, check=False)
+                    inblock = False
+                    collected = ""
+                else:
+                    collected += line + "\n"
+            elif stripped.startswith("```"):
+                lang = stripped[3:]
+                inblock = True
+            else:
+                print(line)
+            
 
 def is_oneliner(text: str) -> bool:
     """Heuristic: fits comfortably in a readline prompt."""
@@ -510,14 +566,13 @@ def display_code(path: Path, verbose: bool) -> None:
     """Pretty-print the saved file using bat (if available) or plain cat."""
     bat = shutil.which("bat") or shutil.which("batcat")
     line = shutil.get_terminal_size().columns * "_"
+    log(f"\n{line}\n")
     if bat:
-        subprocess.run([bat, "--paging=never", "--style=-numbers", str(path)], check=False)
-        log("\n")
+        subprocess.run([bat, "--paging=never", "--style=plain", str(path)], check=False)
     else:
         line = shutil.get_terminal_size().columns * "_"
-        log(line)
         log(path.read_text(), verbose=True)
-        log(f"\n{line}\n")
+    log(f"\n{line}\n")
 
 
 def display_diff(old: Path, new: Path, verbose: bool) -> None:
@@ -564,7 +619,7 @@ def parse_clarify_response(response: str, already_clarified: list[str]) -> list[
                 options = [o.strip() for o in m.group(2).split("||") if o.strip()]
                 if options:
                     ambiguities.append((topic, options))
-                    already_clarified.append(re.sub(r'[^a-z\s]', '', topic.lower()))
+                    already_clarified.append(re.sub(r"[^a-z\s]", "", topic.lower()))
     return (ambiguities if ambiguities else None), already_clarified
 
 
@@ -581,7 +636,9 @@ def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list
             print(f"       {j}) {opt}", file=sys.stderr)
         while True:
             try:
-                raw = input(f"     Your choice: enter the number [1-{len(options)}], 0 for no choice or enter plain text (default 1): ").strip()
+                raw = input(
+                    f"     Your choice: enter the number [1-{len(options)}], 0 for no choice or enter plain text (default 1): "
+                ).strip()
             except EOFError:
                 raw = ""
             if not raw:
@@ -595,13 +652,13 @@ def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list
                     selections.append("")
                     break
                 else:
-                    print(f"     Enter a number from 1 to {len(options)}.", file=sys.stderr)                    
+                    print(f"     Enter a number from 1 to {len(options)}.", file=sys.stderr)
             except ValueError:
                 try:
-                    numbers = [int(token.strip()) for token in re.findall(r'(?:^|\s)\d+(?:$|\s)', raw.strip())]
+                    numbers = [int(token.strip()) for token in re.findall(r"(?:^|\s)\d+(?:$|\s)", raw.strip())]
                     replaced = raw
                     for idx in numbers:
-                        replaced = replaced.replace(f"{idx}", options[idx-1])
+                        replaced = replaced.replace(f"{idx}", options[idx - 1])
                     raw = replaced
                 except IndexError:
                     pass
@@ -609,7 +666,7 @@ def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list
                 # use the response
                 selections.append(raw)
                 break
-            
+
     return selections
 
 
@@ -632,7 +689,7 @@ def perform_clarification(
     verbose: bool,
     max_repeat: int,
     add_constraints_prompt: bool = True,
-    already_clarified: list[str] | None = None
+    already_clarified: list[str] | None = None,
 ) -> str:
     if already_clarified is None:
         already_clarified = ["used language"]
@@ -640,17 +697,17 @@ def perform_clarification(
     log(f"[clarify]: {CLARIFY_SYSTEM_PROMPT}", verbose=verbose)
 
     clarify_raw = query_llm(
-        host=args.host, #"http://localhost:8282", # , #
+        host=args.host,  # "http://localhost:8282", # , #
         model=args.model,
         system_prompt=CLARIFY_SYSTEM_PROMPT,
         user_prompt=f"{user_prompt}, Used Language: {args.mode}.",
-        temperature=0.2, # TODO
+        temperature=0.2,  # TODO
         timeout=args.timeout,
         retries=args.retries,
         retry_delay=args.retry_delay,
         verbose=verbose,
         top_p=0.95,
-        repeat_penalty=1.0
+        repeat_penalty=1.0,
     )
     if clarify_raw is None:
         log("Error: no clarification response from LLM.", verbose=True)
@@ -663,7 +720,9 @@ def perform_clarification(
         user_prompt = build_clarified_prompt(user_prompt, ambiguities, selections, add_constraints_prompt)
         log(f"[clarify] updated prompt: {user_prompt}", verbose=verbose)
         if max_repeat > 1:
-            return perform_clarification(args, user_prompt, query_llm, verbose, max_repeat-1, False, already_clarified)
+            return perform_clarification(
+                args, user_prompt, query_llm, verbose, max_repeat - 1, False, already_clarified
+            )
     else:
         log("[clarify] Task is clear, proceeding …", verbose=verbose)
     return user_prompt
@@ -712,7 +771,7 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
                 log(f"resolved cfg {cfg_keys} as {cfg_val}")
             return cfg_val
         return default
-    
+
     p = argparse.ArgumentParser(
         prog="shellmando",
         description="Query a local LLM for shell commands or code snippets.",
@@ -928,9 +987,13 @@ def main(argv: list[str] | None = None) -> int:
         args.os_hint = detect_os()
 
     if args.justanswer:
-        system_prompt = args.system_prompt or "You are a helpful assistant. Keep your answer short. Show only the best option."
+        system_prompt = (
+            args.system_prompt or "You are a helpful assistant. Keep your answer short. Show only the best option."
+        )
     else:
-        system_prompt = args.system_prompt or build_system_prompt(args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None)
+        system_prompt = args.system_prompt or build_system_prompt(
+            args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None
+        )
 
     system_prompt += " On conflict: user prompt overrides system prompt."
 
@@ -947,7 +1010,6 @@ def main(argv: list[str] | None = None) -> int:
 
         user_prompt = perform_clarification(args, user_prompt, query_llm, verbose, max_repeat=1)
 
-
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
 
@@ -961,7 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         retries=args.retries,
         retry_delay=args.retry_delay,
-        verbose=verbose
+        verbose=verbose,
     )
 
     if raw_content is None:
@@ -973,23 +1035,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.justanswer:
-        print(strip_fences(raw_content))
+        #print_code_blocks_colored(raw_content)
         return 0
 
     # 4. Process response -----------------------------------------------
-    cleaned = strip_fences(raw_content)
+    cleaned = strip_fences(raw_content).strip()
 
     # -- File operation: write result to target file ---------------------
     if file_op is not None:
         bak_file = target_file.with_suffix(target_file.suffix + ".bak")
         if target_file.exists():
             shutil.copy2(target_file, bak_file)
+
         def append_changes():
             with target_file.open("a", encoding="utf-8") as f:
                 if file_content and not file_content.endswith("\n"):
                     f.write("\n")
                 f.write("\n" + cleaned + "\n")
             log(f"Appended to: {target_file}", verbose=True)
+
         if file_op == "edit":
             target_file.write_text(cleaned + "\n", encoding="utf-8")
             log(f"Wrote: {target_file}", verbose=True)
@@ -1000,7 +1064,7 @@ def main(argv: list[str] | None = None) -> int:
         # Ask user for action
         print("\nDo you want to apply the changes")
         choice = input("Enter your choice (y/n) - default y: ").strip()
-        
+
         if choice == "y" or choice == "Y" or choice == "J" or choice == "":
             log("done.", verbose=True)
         else:
@@ -1011,7 +1075,7 @@ def main(argv: list[str] | None = None) -> int:
             choice = input("retry (y/n) - default n: ").strip()
             if choice == "y" or choice == "Y" or choice == "J":
                 log("Retrying")
-                new_temp = args.temperature - 0.1 if args.temperature > 0.2 else args.temperature-0.01
+                new_temp = args.temperature - 0.1 if args.temperature > 0.2 else args.temperature - 0.01
                 return main([*argv, "-t", str(new_temp)])
         return 0
 
@@ -1034,7 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
         # Write to prompt file for readline injection
         if args.prompt_file:
             args.prompt_file.write_text(cleaned, encoding="utf-8")
-        print(cleaned)
+        print_code_blocks_colored(raw_content)
         return 0
 
     # Multi-line: save as script
