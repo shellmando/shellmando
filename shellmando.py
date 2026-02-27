@@ -186,6 +186,8 @@ def _count_up_moves(text: str) -> int:
             if current_col > term_width:
                 up_moves += 1
                 current_col = 1
+    if current_col > 0:
+        up_moves += 1
     return up_moves
 
 
@@ -194,7 +196,7 @@ def _clear_streaming_output(text: str) -> None:
     if not sys.stderr.isatty() or not text:
         return
     up = _count_up_moves(text)
-    if up:
+    for _ in range(up):
         sys.stderr.write(f"\033[{up}A")
     sys.stderr.write("\r\033[J")
     sys.stderr.flush()
@@ -383,9 +385,7 @@ def query_llm_ollama(
                     if chunk.get("done"):
                         break
             _clear_streaming_output(accumulated)
-            if verbose:
-                log(f"[llm-ollama] full response:\n{accumulated}", verbose=True)
-            return accumulated or None
+            return accumulated
         except urllib.error.URLError as exc:
             _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
@@ -453,9 +453,7 @@ def query_llm_llama_server(
                             sys.stderr.flush()
                         accumulated += delta
             _clear_streaming_output(accumulated)
-            if verbose:
-                log(f"[llm] full response:\n{accumulated}", verbose=True)
-            return accumulated or None
+            return accumulated
         except urllib.error.URLError as exc:
             _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
@@ -578,14 +576,13 @@ def display_code(path: Path, verbose: bool) -> None:
     """Pretty-print the saved file using bat (if available) or plain cat."""
     bat = shutil.which("bat") or shutil.which("batcat")
     line = shutil.get_terminal_size().columns * "_"
+    log(f"\n{line}\n")
     if bat:
-        subprocess.run([bat, "--paging=never", "--style=-numbers", str(path)], check=False)
-        log("\n")
+        subprocess.run([bat, "--paging=never", "--style=plain", str(path)], check=False)
     else:
         line = shutil.get_terminal_size().columns * "_"
-        log(line)
         log(path.read_text(), verbose=True)
-        log(f"\n{line}\n")
+    log(f"\n{line}\n")
 
 
 def display_diff(old: Path, new: Path, verbose: bool) -> None:
@@ -1045,7 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # 4. Process response -----------------------------------------------
-    cleaned = strip_fences(raw_content)
+    cleaned = strip_fences(raw_content).strip()
 
     # -- File operation: write result to target file ---------------------
     if file_op is not None:
