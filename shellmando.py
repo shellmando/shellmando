@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import platform
 import ast
+import contextlib
 import json
 import os
 import re
@@ -170,35 +171,19 @@ def log(msg: str, *, verbose: bool = True) -> None:
         print(msg, file=sys.stderr)
 
 
-def _count_up_moves(text: str) -> int:
-    """Count cursor-up moves needed to return to before *text* was printed on stderr."""
-    if not text:
-        return 0
-    term_width = shutil.get_terminal_size().columns
-    up_moves = 0
-    current_col = 0
-    for char in text:
-        if char == "\n":
-            up_moves += 1
-            current_col = 0
-        else:
-            current_col += 1
-            if current_col > term_width:
-                up_moves += 1
-                current_col = 1
-    if current_col > 0:
-        up_moves += 1
-    return up_moves
-
-
-def _clear_streaming_output(text: str) -> None:
-    """Erase *text* that was streamed live to stderr, returning cursor to start."""
+def _erase_streamed_output(text: str) -> None:
+    """Erase lines written to stderr during streaming so final output can replace them.
+   """
     if not sys.stderr.isatty() or not text:
         return
-    up = _count_up_moves(text)
-    for _ in range(up):
-        sys.stderr.write(f"\033[{up}A")
-    sys.stderr.write("\r\033[J")
+    sz = shutil.get_terminal_size()
+    cols = sz.columns
+    visual_lines = sum(
+        (len(seg) + cols) // cols if seg else 1
+        for seg in text.split("\n")
+    )
+    n = visual_lines - 1
+    sys.stderr.write(f"\033[{n}A\033[1G\033[J" if n > 0 else "\033[1G\033[J")
     sys.stderr.flush()
 
 
@@ -361,7 +346,8 @@ def query_llm_ollama(
     ).encode()
 
     headers = {"Content-Type": "application/json"}
-    is_tty = sys.stderr.isatty()
+
+    isatty = sys.stderr.isatty()
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
@@ -377,17 +363,15 @@ def query_llm_ollama(
                     except json.JSONDecodeError:
                         continue
                     delta = (chunk.get("message") or {}).get("content") or ""
-                    if delta:
-                        if is_tty:
-                            sys.stderr.write(delta)
-                            sys.stderr.flush()
-                        accumulated += delta
+                    if isatty and delta:
+                        sys.stderr.write(delta)
+                        sys.stderr.flush()
+                    accumulated += delta
                     if chunk.get("done"):
                         break
-            _clear_streaming_output(accumulated)
+            _erase_streamed_output(accumulated)
             return accumulated
         except urllib.error.URLError as exc:
-            _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
@@ -428,7 +412,6 @@ def query_llm_llama_server(
     ).encode()
 
     headers = {"Content-Type": "application/json"}
-    is_tty = sys.stderr.isatty()
 
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
@@ -448,14 +431,12 @@ def query_llm_llama_server(
                         continue
                     delta = (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content") or ""
                     if delta:
-                        if is_tty:
-                            sys.stderr.write(delta)
-                            sys.stderr.flush()
-                        accumulated += delta
-            _clear_streaming_output(accumulated)
+                        sys.stderr.write(delta)
+                        sys.stderr.flush()
+                    accumulated += delta
+            _erase_streamed_output(accumulated)
             return accumulated
         except urllib.error.URLError as exc:
-            _clear_streaming_output(accumulated)
             log(f"[attempt {attempt}/{retries}] {exc}", verbose=verbose)
             if attempt < retries:
                 time.sleep(retry_delay)
