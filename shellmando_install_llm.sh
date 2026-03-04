@@ -296,7 +296,18 @@ install_llama_server_binary() {
     fi
 
     install -m755 "$server_bin" "${install_dir}/llama-server"
-    rm -rf "$zip_file" "$extract_dir"
+
+    # Install shared libraries alongside the binary.
+    # llama.cpp sets $ORIGIN in its rpath so the binary finds .so files
+    # in the same directory it lives in.
+    local lib_count=0
+    while IFS= read -r -d '' lib; do
+        install -m755 "$lib" "${install_dir}/"
+        (( lib_count++ )) || true
+    done < <(find "$extract_dir" \( -name "*.so" -o -name "*.so.*" \) \( -type f -o -type l \) -print0)
+    [[ $lib_count -gt 0 ]] && info "Installed ${lib_count} shared libraries to ${install_dir}/"
+
+    rm -rf "$archive_file" "$extract_dir"
 
     info "llama-server installed to ${install_dir}/llama-server"
 
