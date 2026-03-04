@@ -166,8 +166,9 @@ _llama_server_download_url() {
     arch="$(detect_arch)"
 
     local platform_tag
+    local system
     case "${os}-${arch}" in
-        Linux-x86_64)  platform_tag="ubuntu-x64"  ;;
+        Linux-x86_64)  platform_tag="ubuntu-vulkan-x64"  ;;
         Linux-aarch64) platform_tag="ubuntu-arm64" ;;
         Darwin-arm64)  platform_tag="macos-arm64"  ;;
         Darwin-x86_64) platform_tag="macos-x64"    ;;
@@ -182,7 +183,7 @@ _llama_server_download_url() {
     info "Fetching latest llama.cpp release info from GitHub..."
     local api_url="https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
     local release_json
-    release_json=$(curl -sf "$api_url")
+    release_json=$(curl -sfL "$api_url")
 
     local download_url=""
 
@@ -191,8 +192,8 @@ _llama_server_download_url() {
     if [[ "${os}-${arch}" == "Linux-x86_64" ]]; then
         download_url=$(echo "$release_json" \
             | grep '"browser_download_url"' \
-            | grep "${platform_tag}" \
-            | grep '\.zip"' \
+            | grep "${system}" \
+            | grep '\.tar.gz"' \
             | grep 'vulkan' \
             | grep -v 'cuda\|hip\|kompute\|sycl\|rpc' \
             | head -1 \
@@ -257,21 +258,40 @@ install_llama_server_binary() {
     local download_url
     download_url=$(_llama_server_download_url)
 
-    local zip_file="/tmp/llama-cpp-$$.zip"
+    # Extract the archive suffix from the URL
+    local archive_suffix
+    if [[ "$download_url" == *.tar.gz ]]; then
+        archive_suffix=".tar.gz"
+    elif [[ "$download_url" == *.zip ]]; then
+        archive_suffix=".zip"
+    else
+        echo "Unsupported archive format: $download_url" >&2
+        return 1
+    fi
+
+    local archive_file="/tmp/llama-cpp-$$${archive_suffix}"
     local extract_dir="/tmp/llama-cpp-$$"
 
     info "Downloading: ${download_url}"
-    curl -L --progress-bar "$download_url" -o "$zip_file"
+    curl -L --progress-bar "$download_url" -o "$archive_file"
 
     echo "Extracting archive..."
     mkdir -p "$extract_dir"
-    unzip -q "$zip_file" -d "$extract_dir"
+
+    case "$archive_suffix" in
+        .tar.gz)
+            tar -xzf "$archive_file" -C "$extract_dir"
+            ;;
+        .zip)
+            unzip -q "$archive_file" -d "$extract_dir"
+            ;;
+    esac
 
     local server_bin
     server_bin=$(find "$extract_dir" -name "llama-server" -type f | head -1)
     if [[ -z "$server_bin" ]]; then
         err "llama-server binary not found in archive."
-        rm -rf "$zip_file" "$extract_dir"
+        rm -rf "$archive_file" "$extract_dir"
         exit 1
     fi
 

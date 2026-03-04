@@ -148,3 +148,7 @@ function _shellmando_exec() {
     fi
 }
 
+alias ask=shellmando
+alias shdo=shellmando
+alias shmdo=shellmando
+
