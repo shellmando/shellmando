@@ -24,6 +24,12 @@ Describe what you need in plain English or any language your local LLM supports 
 
 ### Quick install
 
+```bash
+curl -sSL https://raw.githubusercontent.com/shellmando/shellmando/main/get.sh | bash
+```
+
+### Automatic with checked out project
+
 Run the setup script from the repository root:
 
 ```bash
