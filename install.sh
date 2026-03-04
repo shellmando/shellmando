@@ -88,7 +88,7 @@ check_prerequisites() {
         local py_ver="${SHELLMANDO_PYTHON_VERSION:-3.14}"
         if ! uv python find "$py_ver" &>/dev/null 2>&1; then
             echo ""
-            read -rp "Install Python ${py_ver} via uv now? [Y/n]: " _ans
+            read -rp "Install Python ${py_ver} via uv now? [Y/n]: " _ans || true
             if [[ ! "${_ans:-y}" =~ ^[Nn]$ ]]; then
                 info "Installing Python ${py_ver} via uv..."
                 uv python install "$py_ver"
@@ -218,7 +218,7 @@ do_install() {
         printf "${BOLD}Local LLM setup${RESET}\n"
         echo "shellmando needs a local LLM server (ollama or llama.cpp)."
         echo ""
-        read -rp "Set up a local LLM backend now? [Y/n]: " llm_answer
+        read -rp "Set up a local LLM backend now? [Y/n]: " llm_answer || true
         if [[ ! "${llm_answer:-y}" =~ ^[Nn]$ ]]; then
             echo ""
             bash "$LIB_DIR/shellmando_install_llm.sh"
