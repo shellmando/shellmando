@@ -165,13 +165,17 @@ _llama_server_download_url() {
     os="$(detect_os)"
     arch="$(detect_arch)"
 
-    local platform_tag
-    local system
-    case "${os}-${arch}" in
-        Linux-x86_64)  platform_tag="ubuntu-vulkan-x64"  ;;
-        Linux-aarch64) platform_tag="ubuntu-arm64" ;;
-        Darwin-arm64)  platform_tag="macos-arm64"  ;;
-        Darwin-x86_64) platform_tag="macos-x64"    ;;
+    local download_os=$os
+    local download_arch=$arch
+    . /etc/os-release
+    download_os=$(echo "$ID" | awk '{print tolower($0)}')
+    local archive_type=".zip"
+
+    case "${arch}" in
+        x86_64) download_arch="x64"; archive_type=".tar.gz" ;;
+        aarch64) download_arch="arm64"; archive_type=".tar.gz" ;;
+        Darwin-arm64)  download_arch="arm64"; archive_type=".tar.gz"  ;;
+        Darwin-x86_64) download_arch="x64"; archive_type=".tar.gz"    ;;
         *)
             err "Unsupported platform: ${os}-${arch}"
             echo "Please build llama.cpp from source:" >&2
@@ -192,8 +196,9 @@ _llama_server_download_url() {
     if [[ "${os}-${arch}" == "Linux-x86_64" ]]; then
         download_url=$(echo "$release_json" \
             | grep '"browser_download_url"' \
-            | grep "${system}" \
-            | grep '\.tar.gz"' \
+            | grep "${download_os}" \
+            | grep "${download_arch}" \
+            | grep "${archive_type}" \
             | grep 'vulkan' \
             | grep -v 'cuda\|hip\|kompute\|sycl\|rpc' \
             | head -1 \
@@ -209,8 +214,7 @@ _llama_server_download_url() {
     if [[ -z "$download_url" ]]; then
         download_url=$(echo "$release_json" \
             | grep '"browser_download_url"' \
-            | grep "${platform_tag}" \
-            | grep '\.zip"' \
+            | grep "bin-${download_os}-${download_arch}${archive_type}" \
             | grep -v 'cuda\|hip\|vulkan\|kompute\|sycl\|rpc' \
             | head -1 \
             | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
@@ -296,7 +300,18 @@ install_llama_server_binary() {
     fi
 
     install -m755 "$server_bin" "${install_dir}/llama-server"
-    rm -rf "$zip_file" "$extract_dir"
+
+    # Install shared libraries alongside the binary.
+    # llama.cpp sets $ORIGIN in its rpath so the binary finds .so files
+    # in the same directory it lives in.
+    local lib_count=0
+    while IFS= read -r -d '' lib; do
+        install -m755 "$lib" "${install_dir}/"
+        (( lib_count++ )) || true
+    done < <(find "$extract_dir" \( -name "*.so" -o -name "*.so.*" \) \( -type f -o -type l \) -print0)
+    [[ $lib_count -gt 0 ]] && info "Installed ${lib_count} shared libraries to ${install_dir}/"
+
+    rm -rf "$archive_file" "$extract_dir"
 
     info "llama-server installed to ${install_dir}/llama-server"
 
