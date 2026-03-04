@@ -82,18 +82,19 @@ CODE_MODES = {"python"}
 NO_MODES = {"none"}
 ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
 
-CLARIFY_SYSTEM_PROMPT_CHECK = (
+CLARIFY_SYSTEM_PROMPT = (
     "You are a senior engineer. "
-    "Break down the user's task into sub-tasks and detect missing information for implementation, "
-    " _especially_ input-data, their structures and the presented outputs. "
-    "With sub-tasks as topics and 2-5 possible options used to satisfy the missing information "
+    "Break down the user's task into sub-tasks and check if the given task and information "
+    "is clear or if information is missing, "
+    " _especially_ for input-data, their structures, error handling and the presented outputs. "
+    "If no information is missing reply ONLY: CLEAR. "
+    "Otherwise with sub-tasks as topics and 2-7 options to satisfy the missing information "
     "reply ONLY with lines in this exact format:\n"
     "A: <topic> [<option1> || <option2> || ...]\n"
-    "Without missing information reply ONLY: CLEAR. "
 )
 
 
-CLARIFY_SYSTEM_PROMPT = CLARIFY_SYSTEM_PROMPT_CHECK
+CLARIFY_SYSTEM_PROMPT = CLARIFY_SYSTEM_PROMPT
 
 _CONFIG_SEARCH_PATHS: list[Path] = [
     Path(DEFAULT_CONFIG_HOME) / "shellmando" / "config.toml",
@@ -336,13 +337,14 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
 
     return instruction
 
+
 def _print_banner(user_prompt: str) -> None:
     isatty = sys.stderr.isatty()
     cols = shutil.get_terminal_size().columns
-    CYAN   = "\033[36m" if isatty else ""
-    BOLD   = "\033[1m"  if isatty else ""
+    CYAN = "\033[36m" if isatty else ""
+    BOLD = "\033[1m" if isatty else ""
     YELLOW = "\033[33m" if isatty else ""
-    RESET  = "\033[0m"  if isatty else ""
+    RESET = "\033[0m" if isatty else ""
     rule = CYAN + "─" * cols + RESET
     sys.stderr.write(f"\n{rule}\n")
     sys.stderr.write(f"  {BOLD}{CYAN}✦ shellmando{RESET}\n")
@@ -451,10 +453,11 @@ def query_llm(
 # Response processing
 # ---------------------------------------------------------------------------
 
+
 def strip_fences(text: str) -> str:
     """Remove markdown fences and trim whitespace, just like the old sed chain."""
-    return "\n".join([line for line in text.splitlines() 
-                      if not line.strip().startswith("```")])
+    return "\n".join([line for line in text.splitlines() if not line.strip().startswith("```")])
+
 
 def print_code_blocks_colored(text: str):
     bat = shutil.which("bat") or shutil.which("batcat")
@@ -468,10 +471,12 @@ def print_code_blocks_colored(text: str):
             if inblock and lang != "":
                 if stripped.startswith("```"):
                     sys.stdout.write(f"\033[38;5;244m")
-                    horizontal_line = " " + min(max_len + 2,shutil.get_terminal_size().columns - 1) * "─"
+                    horizontal_line = " " + min(max_len + 2, shutil.get_terminal_size().columns - 1) * "─"
                     print(horizontal_line)
                     sys.stdout.write(f"\033[0m")
-                    subprocess.run([bat, "--paging=never", "--style=plain", f"-l={lang}"], input=collected, text=True, check=False)
+                    subprocess.run(
+                        [bat, "--paging=never", "--style=plain", f"-l={lang}"], input=collected, text=True, check=False
+                    )
                     sys.stdout.write(f"\033[38;5;244m")
                     print(horizontal_line)
                     sys.stdout.write(f"\033[0m")
@@ -492,13 +497,13 @@ def print_code_blocks_colored(text: str):
                         sys.stdout.write(f"\033[38;5;172m{elem}\033[0m")
                     else:
                         sys.stdout.write(elem)
-                    print_orange = (print_orange == False)
+                    print_orange = print_orange == False
                 print("")
             else:
                 print(line)
     else:
         print(text)
-            
+
 
 def is_oneliner(text: str) -> bool:
     """Heuristic: fits comfortably in a readline prompt."""
@@ -618,7 +623,7 @@ def display_diff(old: Path, new: Path, verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def parse_clarify_response(response: str, already_clarified: list[str]) -> list[tuple[str, list[str]]] | None:
+def parse_clarify_response(response: str) -> list[tuple[str, list[str]]] | None:
     """Parse the clarification LLM response.
 
     Returns ``None`` when the task is CLEAR, otherwise a list of
@@ -626,19 +631,17 @@ def parse_clarify_response(response: str, already_clarified: list[str]) -> list[
     ``A: <topic> [<option1> | <option2> | ...]``
     """
     stripped = response.strip()
-    if stripped == "CLEAR":
-        return None, already_clarified
+    if "CLEAR" in stripped.split("\n")[0]:
+        return None
     ambiguities: list[tuple[str, list[str]]] = []
     for line in stripped.splitlines():
         m = re.match(r"[A-Z]*:?\s*(.+?)\s*\[(.+?)\]\s*$", line.strip())
         if m:
-            topic = m.group(1).strip()
-            if topic.lower() not in already_clarified:
-                options = [o.strip() for o in m.group(2).split("||") if o.strip()]
-                if options:
-                    ambiguities.append((topic, options))
-                    already_clarified.append(re.sub(r"[^a-z\s]", "", topic.lower()))
-    return (ambiguities if ambiguities else None), already_clarified
+            options = [o.strip() for o in m.group(2).split("||") if o.strip()]
+            if options:
+                topic = m.group(1).strip()
+                ambiguities.append((topic, options))
+    return (ambiguities if ambiguities else None)
 
 
 def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list[str]:
@@ -673,7 +676,7 @@ def prompt_user_clarifications(ambiguities: list[tuple[str, list[str]]]) -> list
                     print(f"     Enter a number from 1 to {len(options)}.", file=sys.stderr)
             except ValueError:
                 try:
-                    numbers = [int(token.strip()) for token in re.findall(r"(?:^|\s)\d+(?:$|\s)", raw.strip())]
+                    numbers = [int(token.strip()) for token in re.findall(r"(?:^|\s)\d+(?:$|[\s.:,])", raw.strip())]
                     replaced = raw
                     for idx in numbers:
                         replaced = replaced.replace(f"{idx}", options[idx - 1])
@@ -692,11 +695,11 @@ def build_clarified_prompt(
     original: str,
     ambiguities: list[tuple[str, list[str]]],
     selections: list[str],
-    add_constraints_prompt: bool,
+    add_constraints_prompt: bool = True,
 ) -> str:
     """Append the user's clarification choices to *original*."""
     parts = [f"{topic}: {sel}" for (topic, _), sel in zip(ambiguities, selections) if sel != ""]
-    constraints_prompt = ".\nClarifications: {" if add_constraints_prompt else "; "
+    constraints_prompt = ".\nHints: {" if add_constraints_prompt else "; "
     return original.rstrip(".") + constraints_prompt + "; ".join(parts) + "}"
 
 
@@ -704,43 +707,34 @@ def perform_clarification(
     args: argparse.Namespace,
     user_prompt: str,
     query_llm: callable,
-    verbose: bool,
-    max_repeat: int,
-    add_constraints_prompt: bool = True,
-    already_clarified: list[str] | None = None,
+    verbose: bool
 ) -> str:
-    if already_clarified is None:
-        already_clarified = ["used language"]
-
+    
     log(f"[clarify]: {CLARIFY_SYSTEM_PROMPT}", verbose=verbose)
 
     clarify_raw = query_llm(
         host=args.host,  # "http://localhost:8282", # , #
         model=args.model,
         system_prompt=CLARIFY_SYSTEM_PROMPT,
-        user_prompt=f"{user_prompt}, Used Language: {args.mode}.",
-        temperature=0.2,  # TODO
+        user_prompt=f"{user_prompt.rstrip(".")}, Used Language: {args.mode}.",
+        temperature=0.1,  # TODO
         timeout=args.timeout,
         retries=args.retries,
         retry_delay=args.retry_delay,
         verbose=verbose,
         top_p=0.95,
-        repeat_penalty=1.0,
+        repeat_penalty=1.01,
     )
     if clarify_raw is None:
         log("Error: no clarification response from LLM.", verbose=True)
         return 1
-    ambiguities, already_clarified = parse_clarify_response(clarify_raw, already_clarified)
+    ambiguities = parse_clarify_response(clarify_raw)
     if ambiguities:
         log("\n[clarify] the task has some ambiguities:\n", verbose=True)
         log(re.sub("[A-Z]: ", " * ", clarify_raw.strip()), verbose=True)
         selections = prompt_user_clarifications(ambiguities)
-        user_prompt = build_clarified_prompt(user_prompt, ambiguities, selections, add_constraints_prompt)
+        user_prompt = build_clarified_prompt(user_prompt, ambiguities, selections)
         log(f"[clarify] updated prompt: {user_prompt}", verbose=verbose)
-        if max_repeat > 1:
-            return perform_clarification(
-                args, user_prompt, query_llm, verbose, max_repeat - 1, False, already_clarified
-            )
     else:
         log("[clarify] Task is clear, proceeding …", verbose=verbose)
     return user_prompt
@@ -1026,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.clarify:
         log("[clarify] Asking LLM to identify ambiguities …", verbose=True)
 
-        user_prompt = perform_clarification(args, user_prompt, _query, verbose, max_repeat=1)
+        user_prompt = perform_clarification(args, user_prompt, _query, verbose)
 
     log(f"[system] {system_prompt}", verbose=verbose)
     log(f"[user]   {user_prompt}", verbose=verbose)
@@ -1060,7 +1054,7 @@ def main(argv: list[str] | None = None) -> int:
     cleaned = strip_fences(raw_content).strip()
 
     # -- File operation: write result to target file ---------------------
-    if file_op is not None:
+    if file_op is not None and not args.snippet:
         bak_file = target_file.with_suffix(target_file.suffix + ".bak")
         if target_file.exists():
             shutil.copy2(target_file, bak_file)
@@ -1082,6 +1076,7 @@ def main(argv: list[str] | None = None) -> int:
         # Ask user for action
         print("\nDo you want to apply the changes")
         choice = input("Enter your choice (y/n) - default y: ").strip()
+        print(f"choice = '{choice}'")
 
         if choice == "y" or choice == "Y" or choice == "J" or choice == "":
             log("done.", verbose=True)
@@ -1099,10 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Snippet mode: display + clipboard, nothing else -------------------
     if args.snippet:
-        line = "_" * shutil.get_terminal_size().columns
-        log(line)
-        log(cleaned, verbose=True)
-        log(line)
+        print_code_blocks_colored(raw_content)
         if copy_to_clipboard(cleaned):
             log("  >> copied to clipboard", verbose=True)
         else:
