@@ -69,4 +69,10 @@ fi
 
 # -- run the real installer with any forwarded arguments -------------------
 info "Running installer..."
-bash "${SRC_DIR}/install.sh" "$@"
+# Redirect stdin from /dev/tty so that install.sh can prompt the user
+# interactively even when get.sh itself is piped in via `curl | bash`.
+if [[ -t 0 ]]; then
+    bash "${SRC_DIR}/install.sh" "$@"
+else
+    bash "${SRC_DIR}/install.sh" "$@" </dev/tty
+fi
