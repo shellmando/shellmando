@@ -29,6 +29,26 @@ export SHELLMANDO_LLM_STARTER
 : "${SHELLMANDO_PY:=${SHELLMANDO_DIR}/shellmando.py}"
 
 function shellmando() {
+    # -- resolve Python interpreter ----------------------------------------
+    # Priority: SHELLMANDO_PYTHON env var > python3 > uv run
+    local -a _py
+    if [[ -n "${SHELLMANDO_PYTHON:-}" ]]; then
+        _py=("$SHELLMANDO_PYTHON")
+    elif command -v python3 &>/dev/null; then
+        _py=(python3)
+    elif command -v uv &>/dev/null; then
+        if [[ -n "${SHELLMANDO_PYTHON_VERSION:-}" ]]; then
+            _py=(uv run --python "$SHELLMANDO_PYTHON_VERSION")
+        else
+            _py=(uv run)
+        fi
+    else
+        echo "shellmando: python3 or uv is required but neither was found." >&2
+        echo "  Install python3:  https://www.python.org/downloads/" >&2
+        echo "  Install uv:       curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+        return 1
+    fi
+
     # -- collect flags that we forward to shellmando.py -------------------
     local -a py_args=()
     local OPTIND opt
@@ -50,7 +70,7 @@ function shellmando() {
             --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
-            --help|-h)        python3 "$SHELLMANDO_PY" --help; return 0 ;;
+            --help|-h)        "${_py[@]}" "$SHELLMANDO_PY" --help; return 0 ;;
             --)               shift; break ;;
             -*)               echo "Unknown flag: $1 (try --help)"; return 1 ;;
             *)                break ;;       # first non-flag word → task starts
@@ -78,7 +98,7 @@ function shellmando() {
     [[ -n "$SHELLMANDO_CONFIG" ]] && base_args+=(--config "$SHELLMANDO_CONFIG")
 
     local exit_code
-    python3 "$SHELLMANDO_PY" \
+    "${_py[@]}" "$SHELLMANDO_PY" \
         "${base_args[@]}" \
         "${py_args[@]}" \
         -- "$@"

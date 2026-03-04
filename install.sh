@@ -60,26 +60,47 @@ EOF
 
 # -- check required tools --------------------------------------------------
 check_prerequisites() {
-    local missing=()
+    local has_python=false has_uv=false
 
-    if ! command -v python3 &>/dev/null; then
-        missing+=("python3")
-    fi
-    if ! command -v curl &>/dev/null; then
-        missing+=("curl")
-    fi
+    command -v python3 &>/dev/null && has_python=true
+    command -v uv      &>/dev/null && has_uv=true
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        err "Missing required dependencies: ${missing[*]}"
+    if ! $has_python && ! $has_uv; then
+        err "Neither python3 nor uv found — one is required."
         echo ""
-        echo "Install them and re-run the installer."
-        echo "  Debian/Ubuntu:  sudo apt install ${missing[*]}"
-        echo "  Fedora:         sudo dnf install ${missing[*]}"
-        echo "  macOS:          brew install ${missing[*]}"
+        echo "Install one of:"
+        echo "  python3:  https://www.python.org/downloads/"
+        echo "  uv:       curl -LsSf https://astral.sh/uv/install.sh | sh"
         exit 1
     fi
 
-    # Warn (but don't abort) if tomllib / tomli is missing
+    if ! command -v curl &>/dev/null; then
+        err "curl is required but was not found."
+        echo "  Debian/Ubuntu:  sudo apt install curl"
+        echo "  Fedora:         sudo dnf install curl"
+        echo "  macOS:          brew install curl"
+        exit 1
+    fi
+
+    if ! $has_python && $has_uv; then
+        info "python3 not found — shellmando will use 'uv run' at runtime"
+        # Offer to install a pinned Python via uv for a reproducible environment
+        local py_ver="${SHELLMANDO_PYTHON_VERSION:-3.14}"
+        if ! uv python find "$py_ver" &>/dev/null 2>&1; then
+            echo ""
+            read -rp "Install Python ${py_ver} via uv now? [Y/n]: " _ans
+            if [[ ! "${_ans:-y}" =~ ^[Nn]$ ]]; then
+                info "Installing Python ${py_ver} via uv..."
+                uv python install "$py_ver"
+                info "Python ${py_ver} installed to \$XDG_DATA_HOME/uv/python/"
+            fi
+        else
+            info "Python ${py_ver} already available via uv"
+        fi
+        return
+    fi
+
+    # python3 is available — warn if TOML support is missing
     if ! python3 -c "import tomllib" 2>/dev/null && \
        ! python3 -c "import tomli"   2>/dev/null; then
         warn "No TOML library found. Config file support requires Python 3.11+"
