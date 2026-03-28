@@ -108,6 +108,7 @@ ask [options] <task ...>
 | `--model` | Model name to use |
 | `--system-prompt` | Override the entire system prompt |
 | `--config` | Path to a TOML config file (see [docs/config.md](docs/config.md)) |
+| `-c, --change-defaults` | Write the supplied parameters as new defaults to the config file and exit. No task is needed. |
 
 ## Examples
 
@@ -142,6 +143,20 @@ ask --raw "generate a cron expression for every weekday at 9am" > cron.txt
 ```
 
 With `--raw`, the unprocessed LLM response is printed to stdout -- useful for piping or saving directly to a file.
+
+### Persist a setting as new default
+
+```bash
+ask -c -m python
+```
+
+Writes `mode = "python"` under `[generation]` in your config file and exits. From now on, shellmando defaults to Python mode without needing `-m python` each time. Combine multiple flags to update several defaults at once:
+
+```bash
+ask -c -m python -t 0.3 --model my-model
+```
+
+Any configurable flag (`-m`, `-t`, `--model`, `--host`, `--os`, `--output`, etc.) can be persisted this way. The config file is created at `$XDG_CONFIG_HOME/shellmando/config.toml` if it does not exist yet.
 
 ## Configuration
 
