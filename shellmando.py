@@ -386,6 +386,117 @@ def health_check(host: str, timeout: float = 0.5) -> tuple[bool, bool]:
             return False, False
 
 
+def _has_systemd() -> bool:
+    """Return True if a systemd user session is available."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "status"],
+            capture_output=True,
+            timeout=5,
+        )
+        # Exit code 0 = running units exist; 3 = no units loaded but systemd is present
+        return result.returncode in (0, 3)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _detect_shell_profile() -> Path:
+    """Return the path of the user's interactive shell profile."""
+    shell = os.path.basename(os.environ.get("SHELL", "bash"))
+    if shell == "zsh":
+        zdotdir = os.environ.get("ZDOTDIR", str(Path.home()))
+        return Path(zdotdir) / ".zshrc"
+    if shell == "bash":
+        bashrc = Path.home() / ".bashrc"
+        if bashrc.exists():
+            return bashrc
+        return Path.home() / ".bash_profile"
+    return Path.home() / ".profile"
+
+
+_AUTOSTART_MARKER = "# shellmando-autostart"
+_SYSTEMD_SERVICE_NAME = "shellmando-llm.service"
+
+
+def _setup_profile_autostart(enable: bool, python_exec: str, script_path: str) -> int:
+    """Add or remove the autostart line from the user's shell profile."""
+    profile = _detect_shell_profile()
+    autostart_line = f"{python_exec} {script_path} --start  {_AUTOSTART_MARKER}"
+
+    if enable:
+        content = profile.read_text(encoding="utf-8") if profile.exists() else ""
+        if _AUTOSTART_MARKER in content:
+            print(f"Autostart already enabled in {profile}", file=sys.stderr)
+            return 0
+        with profile.open("a", encoding="utf-8") as f:
+            f.write(f"\n{autostart_line}\n")
+        print(f"Autostart enabled: added to {profile}", file=sys.stderr)
+    else:
+        if not profile.exists():
+            print("No shell profile found; nothing to remove.", file=sys.stderr)
+            return 0
+        content = profile.read_text(encoding="utf-8")
+        if _AUTOSTART_MARKER not in content:
+            print("Autostart not enabled in shell profile; nothing to remove.", file=sys.stderr)
+            return 0
+        lines = [ln for ln in content.splitlines(keepends=True) if _AUTOSTART_MARKER not in ln]
+        profile.write_text("".join(lines), encoding="utf-8")
+        print(f"Autostart disabled: removed from {profile}", file=sys.stderr)
+    return 0
+
+
+def _setup_systemd_autostart(enable: bool, python_exec: str, script_path: str) -> int:
+    """Create/enable or disable/remove a systemd user service for LLM autostart."""
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file = service_dir / _SYSTEMD_SERVICE_NAME
+
+    if enable:
+        service_dir.mkdir(parents=True, exist_ok=True)
+        service_content = textwrap.dedent(f"""\
+            [Unit]
+            Description=Start local LLM for shellmando
+            After=network.target
+
+            [Service]
+            Type=oneshot
+            ExecStart={python_exec} {script_path} --start
+            RemainAfterExit=no
+
+            [Install]
+            WantedBy=default.target
+        """)
+        service_file.write_text(service_content, encoding="utf-8")
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True)
+            subprocess.run(["systemctl", "--user", "enable", _SYSTEMD_SERVICE_NAME], check=True, capture_output=True)
+            subprocess.run(["systemctl", "--user", "start", _SYSTEMD_SERVICE_NAME], check=False, capture_output=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"Error: systemctl failed: {exc}", file=sys.stderr)
+            return 1
+        print("Autostart enabled via systemd user service.", file=sys.stderr)
+        print(f"  Service file: {service_file}", file=sys.stderr)
+        print("  To check status: systemctl --user status shellmando-llm", file=sys.stderr)
+    else:
+        if not service_file.exists():
+            print("Systemd service not found; nothing to remove.", file=sys.stderr)
+            return 0
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", _SYSTEMD_SERVICE_NAME],
+            check=False, capture_output=True,
+        )
+        service_file.unlink(missing_ok=True)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
+        print("Autostart disabled: systemd service removed.", file=sys.stderr)
+    return 0
+
+
+def handle_autostart(enable: bool, python_exec: str, script_path: str) -> int:
+    """Enable or disable LLM autostart on login."""
+    if _has_systemd():
+        return _setup_systemd_autostart(enable, python_exec, script_path)
+    return _setup_profile_autostart(enable, python_exec, script_path)
+
+
 def ensure_llm_running(
     host: str,
     starter: str | None,
@@ -867,7 +978,7 @@ def perform_clarification(
         host=args.host,  # "http://localhost:8282", # , #
         model=args.model,
         system_prompt=CLARIFY_SYSTEM_PROMPT,
-        user_prompt=f"{user_prompt.rstrip(".")}, Used Language: {args.mode}.",
+        user_prompt=f"{user_prompt.rstrip('.')}, Used Language: {args.mode}.",
         temperature=0.1,  # TODO
         timeout=args.timeout,
         retries=args.retries,
@@ -949,6 +1060,27 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("task", nargs="*", help="Natural-language task description")
+
+    p.add_argument(
+        "--start",
+        action="store_true",
+        default=False,
+        help=(
+            "Check if the LLM is running; start it if not (using --starter), then exit. "
+            "Useful as a login hook or manual warm-up command."
+        ),
+    )
+    p.add_argument(
+        "--autostart",
+        choices=["true", "false"],
+        default=None,
+        metavar="{true,false}",
+        help=(
+            "Enable or disable automatic LLM startup on login. "
+            "Uses a systemd user service when available, otherwise adds a line to your shell profile. "
+            "Example: --autostart=true"
+        ),
+    )
 
     p.add_argument(
         "-c",
@@ -1118,6 +1250,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.change_defaults:
         raw_argv = argv if argv is not None else sys.argv[1:]
         return _write_defaults(cfg_path, cfg, raw_argv)
+
+    # -- Autostart management -----------------------------------------------
+    if args.autostart is not None:
+        python_exec = sys.executable
+        script_path = str(Path(__file__).resolve())
+        return handle_autostart(args.autostart == "true", python_exec, script_path)
+
+    # -- Start-only mode ----------------------------------------------------
+    if args.start:
+        if args.starter:
+            args.starter = os.path.expanduser(args.starter)
+        running, _ = ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose=True)
+        return 0 if running else 1
 
     if not args.task:
         parser.error("the following arguments are required: task")
