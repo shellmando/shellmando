@@ -80,7 +80,8 @@ SHELLMANDO_DIR = os.environ.get("SHELLMANDO_DIR", os.path.curdir)
 SHELL_MODES = {"bash", "sh", "zsh", "fish"}
 CODE_MODES = {"python"}
 NO_MODES = {"none"}
-ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES
+ASSISTANT_MODES = {"assistant"}
+ALL_MODES = SHELL_MODES | CODE_MODES | NO_MODES | ASSISTANT_MODES
 
 CLARIFY_SYSTEM_PROMPT = (
     "You are a senior engineer. "
@@ -332,10 +333,51 @@ def build_system_prompt(mode: str, os_hint: str, snippet: bool, file_output: boo
         )
         instruction = f"{python_instructions}{add_snippet}{add_function}"
 
+    elif mode == "assistant":
+        instruction = "You are a helpful assistant. Keep your answer short. Show only the best option."
+
     else:
         instruction = "You are a helpful assistant."
 
     return instruction
+
+
+def resolve_mode(value: str) -> str | None:
+    """Resolve a mode prefix to a full mode name.
+
+    Returns the resolved mode name, or None if the prefix is ambiguous.
+    Raises SystemExit if the prefix matches nothing.
+    """
+    if value in ALL_MODES:
+        return value
+    matches = sorted(m for m in ALL_MODES if m.startswith(value))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) == 0:
+        log(f"Error: unknown mode '{value}'. Available modes: {', '.join(sorted(ALL_MODES))}", verbose=True)
+        raise SystemExit(1)
+    return None  # ambiguous
+
+
+def resolve_mode_interactive(value: str) -> str:
+    """Resolve a mode prefix interactively when ambiguous."""
+    resolved = resolve_mode(value)
+    if resolved is not None:
+        return resolved
+    matches = sorted(m for m in ALL_MODES if m.startswith(value))
+    sys.stderr.write(f"Ambiguous mode '{value}'. Please choose:\n")
+    for i, m in enumerate(matches, 1):
+        sys.stderr.write(f"  {i}) {m}\n")
+    sys.stderr.flush()
+    while True:
+        try:
+            choice = input("Enter number: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit(1)
+        if choice.isdigit() and 1 <= int(choice) <= len(matches):
+            return matches[int(choice) - 1]
+        sys.stderr.write(f"Please enter a number between 1 and {len(matches)}.\n")
+        sys.stderr.flush()
 
 
 def _print_banner(user_prompt: str) -> None:
@@ -836,9 +878,12 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     g2.add_argument(
         "-m",
         "--mode",
-        choices=sorted(ALL_MODES),
         default=_resolve(None, "generation", "mode", default=None),
-        help="Language / shell mode (default: bash)",
+        help=(
+            f"Language / shell mode (default: bash). "
+            f"Available: {', '.join(sorted(ALL_MODES))}. "
+            "Unique prefixes are accepted (e.g. '-m p' for python)."
+        ),
     )
     g2.add_argument(
         "--os",
@@ -911,12 +956,6 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
         help="Forward full LLM response and debug info to stderr",
     )
     g4.add_argument(
-        "-j",
-        "--justanswer",
-        action="store_true",
-        help="Just answer the question: print the LLM reply and exit " "(no prompt adaptation, no file generated)",
-    )
-    g4.add_argument(
         "--raw",
         action="store_true",
         help="Print raw LLM output to stdout and exit (skip all processing)",
@@ -961,6 +1000,10 @@ def main(argv: list[str] | None = None) -> int:
     if cfg_path and verbose:
         log(f"[config] loaded {cfg_path}", verbose=True)
 
+    # -- Resolve mode prefix ------------------------------------------------
+    if args.mode is not None:
+        args.mode = resolve_mode_interactive(args.mode)
+
     # -- File operations (-e/--edit, -a/--append) ---------------------------
     if args.edit and args.append:
         log("Error: --edit and --append are mutually exclusive.", verbose=True)
@@ -998,14 +1041,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.os_hint == "" and os.environ.get("SHELLMANDO_OS") is None:
         args.os_hint = detect_os()
 
-    if args.justanswer:
-        system_prompt = (
-            args.system_prompt or "You are a helpful assistant. Keep your answer short. Show only the best option."
-        )
-    else:
-        system_prompt = args.system_prompt or build_system_prompt(
-            args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None
-        )
+    system_prompt = args.system_prompt or build_system_prompt(
+        args.mode, args.os_hint, args.snippet, (args.edit or args.append) is not None
+    )
 
     system_prompt += " On conflict: user prompt overrides system prompt."
 
@@ -1046,9 +1084,9 @@ def main(argv: list[str] | None = None) -> int:
         print(raw_content)
         return 0
 
-    if args.justanswer:
+    if args.mode == "assistant":
         print_code_blocks_colored(raw_content)
-        return 0
+        return 3
 
     # 4. Process response -----------------------------------------------
     cleaned = strip_fences(raw_content).strip()

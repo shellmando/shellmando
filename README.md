@@ -94,10 +94,9 @@ ask [options] <task ...>
 
 | Flag | Description |
 |------|-------------|
-| `-m, --mode` | Language mode: `bash`, `sh`, `zsh`, `fish`, `python`, `none` (default: `bash`) |
+| `-m, --mode` | Language mode: `assistant`, `bash`, `fish`, `none`, `python`, `sh`, `zsh` (default: `bash`). Unique prefixes accepted (e.g. `-m p` for `python`). Use `-m assistant` to get a plain answer without shell/code adaptation. |
 | `-t, --temperature` | Sampling temperature, 0-2 (default: `0.1`) |
 | `-s, --snippet` | Generate snippet only: display, copy to clipboard, no file saved |
-| `-j, --justanswer` | Just answer the question: print LLM reply and exit (no prompt adaptation, no file generated) |
 | `-v, --verbose` | Show full LLM response and debug info |
 | `--raw` | Print raw LLM output without processing |
 | `-a, --append` | Append the LLM response to the specified file (the file's content is sent as context with your prompt) |
