@@ -1137,13 +1137,6 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
     # Generation
     g2 = p.add_argument_group("Generation")
     g2.add_argument(
-        "-t",
-        "--temperature",
-        type=float,
-        default=float(_resolve(None, "generation", "temperature", default=DEFAULT_TEMPERATURE)),
-        help=f"Sampling temperature (default: {DEFAULT_TEMPERATURE})",
-    )
-    g2.add_argument(
         "-m",
         "--mode",
         default=_resolve(None, "generation", "mode", default=None),
@@ -1152,6 +1145,13 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
             f"Available: {', '.join(sorted(ALL_MODES))}. "
             "Unique prefixes are accepted (e.g. '-m p' for python)."
         ),
+    )
+    g2.add_argument(
+        "-t",
+        "--temperature",
+        type=float,
+        default=float(_resolve(None, "generation", "temperature", default=DEFAULT_TEMPERATURE)),
+        help=f"Sampling temperature (default: {DEFAULT_TEMPERATURE})",
     )
     g2.add_argument(
         "--os",
