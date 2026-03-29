@@ -53,18 +53,24 @@ function shellmando() {
     local -a py_args=()
     local OPTIND opt
     local snippet_mode=false
+    local call_start=false
 
     # quick pre-scan: pass everything before the bare task words
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
             -s|--snippet)     py_args+=("$1"); snippet_mode=true; shift   ;;
-            -c|--clarify)     py_args+=("$1"); clarify=true; shift ;;
+            -c|--clarify)     py_args+=("$1");       shift ;;
+            -d|--defaults)    py_args+=("$1");       shift ;;
             -v|--verbose)     py_args+=("$1");       shift   ;;
             -m|--mode)        py_args+=("$1" "$2"); shift 2 ;;
             -o|--output)      py_args+=("$1" "$2"); shift 2 ;;
             -e|--edit)        py_args+=("$1" "$2"); shift 2 ;;
             -a|--append)      py_args+=("$1" "$2"); shift 2 ;;
+            -t|--temperature) py_args+=("$1" "$2"); shift 2 ;;
+            --start)
+                              py_args+=("$1"); call_start=true; shift ;;
+            --autostart)
+                              py_args+=("$1" "$2"); call_start=true; shift 2 ;;
             --os|--host|--starter|--model|--system-prompt|--config)
                               py_args+=("$1" "$2"); shift 2 ;;
             --raw)            py_args+=("$1");       shift   ;;
@@ -75,7 +81,7 @@ function shellmando() {
         esac
     done
 
-    if [[ $# -eq 0 ]]; then
+    if [[ $# -eq 0 && ! call_start ]]; then
         echo "Usage: shellmando [options] <task …>" >&2
         return 1
     fi
