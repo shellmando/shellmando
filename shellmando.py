@@ -1097,6 +1097,12 @@ def build_parser(cfg: dict | None = None) -> argparse.ArgumentParser:
             "Example: --autostart=true"
         ),
     )
+    p.add_argument(
+        "--interactive",
+        action="store_true",
+        default=False,
+        help="Start an interactive session (mode + task prompted at the terminal).",
+    )
 
     p.add_argument(
         "-d",
@@ -1278,6 +1284,11 @@ def main(argv: list[str] | None = None) -> int:
             args.starter = os.path.expanduser(args.starter)
         running, _ = ensure_llm_running(args.host, args.starter, args.startup_timeout, verbose=True, use_starter=True)
         return 0 if running else 1
+
+    # -- Interactive mode ---------------------------------------------------
+    if args.interactive:
+        from shellmando_interactive import interactive_mode
+        return interactive_mode(args)
 
     if not args.task:
         parser.error("the following arguments are required: task")

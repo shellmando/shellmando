@@ -81,9 +81,8 @@ function shellmando() {
         esac
     done
 
-    if [[ $# -eq 0 && ! call_start ]]; then
-        echo "Usage: shellmando [options] <task …>" >&2
-        return 1
+    if [[ $# -eq 0 && $call_start == false ]]; then
+        py_args+=(--interactive)
     fi
 
     # -- temp file for the readline payload ------------------------------
