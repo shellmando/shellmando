@@ -187,56 +187,28 @@ def interactive_mode(args: argparse.Namespace) -> int:
     if mode == "assistant":
         print_code_blocks_colored(raw_content)
         if has_code:
-            sys.stderr.write("\nWould you like to c(opy) the code? (any other key to skip)\n")
-            sys.stderr.write("Your choice (press key): ")
-            sys.stderr.flush()
-            ch = getch()
-            sys.stderr.write("\n")
-            sys.stderr.flush()
-            if ch == "c":
-                if copy_to_clipboard(cleaned):
-                    sys.stderr.write("code copied to clipboard\n")
-                else:
-                    sys.stderr.write("clipboard not available\n")
+            if copy_to_clipboard(cleaned):
+                sys.stderr.write("code copied to clipboard\n")
                 sys.stderr.flush()
         return 3
 
     # Shell / code modes
     print_code_blocks_colored(raw_content)
 
-    sys.stderr.write("\nWould you like to e(xecute) or c(opy) the code? (any other key to skip)\n")
-    sys.stderr.write("Your choice (press key): ")
-    sys.stderr.flush()
-
-    ch = getch()
-    sys.stderr.write("\n")
-    sys.stderr.flush()
-
-    if ch == "c":
-        if copy_to_clipboard(cleaned):
-            sys.stderr.write("code copied to clipboard\n")
-        else:
-            sys.stderr.write("clipboard not available\n")
-            if platform.system() == "Linux":
-                sys.stderr.write("  >> suggest installing xclip: sudo apt install xclip\n")
-        sys.stderr.flush()
-        return 3  # done, nothing to execute
-
-    if ch == "e":
-        if is_oneliner(cleaned):
-            if args.prompt_file:
-                args.prompt_file.write_text(cleaned, encoding="utf-8")
-            return 0
-        p = save_script(cleaned, args.output, mode=mode, label="script", make_executable=True)
-        try:
-            p = p.relative_to(Path(SHELLMANDO_DIR))
-        except Exception:
-            pass
-        display_code(p, verbose=True)
-        exec_cmd = f"python3 {p}" if mode == "python" else str(p)
+    if is_oneliner(cleaned):
         if args.prompt_file:
-            args.prompt_file.write_text(exec_cmd, encoding="utf-8")
-        return 2
-
-    # Any other key → skip execution
-    return 3
+            args.prompt_file.write_text(cleaned, encoding="utf-8")
+        return 0
+    p = save_script(cleaned, args.output, mode=mode, label="script", make_executable=True)
+    try:
+        p = p.relative_to(Path(SHELLMANDO_DIR))
+    except Exception:
+        pass
+    display_code(p, verbose=True)
+    exec_cmd = f"python3 {p}" if mode == "python" else str(p)
+    if args.prompt_file:
+        args.prompt_file.write_text(exec_cmd, encoding="utf-8")
+    if copy_to_clipboard(cleaned):
+        sys.stderr.write("code copied to clipboard\n")
+        sys.stderr.flush()        
+    return 2
