@@ -95,12 +95,13 @@ ask [options] <task ...>
 | Flag | Description |
 |------|-------------|
 | `-m, --mode` | Language mode: `assistant`, `bash`, `fish`, `none`, `python`, `sh`, `zsh` (default: `bash`). Unique prefixes accepted (e.g. `-m p` for `python`). Use `-m assistant` to get a plain answer without shell/code adaptation. |
-| `-t, --temperature` | Sampling temperature, 0-2 (default: `0.1`) |
 | `-s, --snippet` | Generate snippet only: display, copy to clipboard, no file saved |
-| `-v, --verbose` | Show full LLM response and debug info |
-| `--raw` | Print raw LLM output without processing |
 | `-a, --append` | Append the LLM response to the specified file (the file's content is sent as context with your prompt) |
 | `-e, --edit` | Overwrite the specified file with the LLM response (the file's content is sent as context with your prompt) |
+| `-c, --clarify` | The LLM is instructed to check the user prompt if clarifications are needed | 
+| `-t, --temperature` | Sampling temperature, 0-2 (default: `0.1`) |
+| `-v, --verbose` | Show full LLM response and debug info |
+| `--raw` | Print raw LLM output without processing |
 | `-o, --output` | Output folder for saved scripts |
 | `--os` | OS context string for the system prompt (auto-detected if omitted) |
 | `--host` | LLM API base URL |
@@ -108,7 +109,7 @@ ask [options] <task ...>
 | `--model` | Model name to use |
 | `--system-prompt` | Override the entire system prompt |
 | `--config` | Path to a TOML config file (see [docs/config.md](docs/config.md)) |
-| `-c, --change-defaults` | Write the supplied parameters as new defaults to the config file and exit. No task is needed. |
+| `-d, --defaults` | Write the supplied parameters as new defaults to the config file and exit. No task is needed. |
 
 ## Examples
 
